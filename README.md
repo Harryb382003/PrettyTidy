@@ -35,6 +35,7 @@ make install
 ## Command-line usage
 
 mojo-prettytidy file.html.ep
+mojo-prettytidy --diff file.html.ep
 mojo-prettytidy --write file.html.ep
 mojo-prettytidy --write --backup file.html.ep
 mojo-prettytidy --write --backup-ext=.orig --backup file.html.ep
@@ -59,6 +60,8 @@ script/mojo-prettytidy --stdin
 Current versions perform conservative cleanup:
 
 When rewriting files in place, use --backup to preserve the original first.
+
+Use --diff to review what would change before rewriting a file.
 
 - normalize line endings to LF
 - remove trailing horizontal whitespace

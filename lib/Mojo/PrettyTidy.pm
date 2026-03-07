@@ -67,12 +67,7 @@ sub _apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    if ( $line =~ /^\s*%/ ) {
-      push @out, $line;
-      next;
-    }
-
-    if ( $line =~ /^\s*<%[=%#]?/ ) {
+    if ( _line_contains_ep($line) ) {
       push @out, $line;
       next;
     }
@@ -139,6 +134,10 @@ sub _ensure_final_newline ( $self, $text ) {
   $text =~ s/\n*\z/\n/;
 
   return $text;
+}
+
+sub _line_contains_ep ($line) {
+  return $line =~ /<%|^\s*%/ ? 1 : 0;
 }
 
 1;

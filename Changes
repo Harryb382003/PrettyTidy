@@ -7,3 +7,4 @@ Revision history for Mojo-PrettyTidy
       - Added CLI with --write, --check, --stdin, and --version
       - Added sample-driven and CLI tests
       - Added --backup and --backup-ext support for safer in-place writes
+      - Added pure-Perl --diff support with minimal unified-style output

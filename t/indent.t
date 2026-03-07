@@ -48,4 +48,28 @@ subtest 'void elements do not increase indentation' => sub {
   is $pt->tidy( $in ), $expected, 'void tags do not shift indentation depth';
 };
 
+subtest 'inline EP in html line is left alone' => sub {
+  my $in = "<div>\n<div><%= \$name %></div>\n</div>\n";
+
+  my $expected = "<div>\n<div><%= \$name %></div>\n</div>\n";
+
+  is $pt->tidy($in), $expected, 'inline EP line is not reindented';
+};
+
+subtest 'attribute-level EP line is left alone' => sub {
+  my $in = "<div>\n<a href=\"<%= \$url %>\">Link</a>\n</div>\n";
+
+  my $expected = "<div>\n<a href=\"<%= \$url %>\">Link</a>\n</div>\n";
+
+  is $pt->tidy($in), $expected, 'attribute-level EP line is not reindented';
+};
+
+subtest 'mixed EP block tag line is left alone' => sub {
+  my $in = "<div>\n<% if (\$ok) { %>\n<p>Hello</p>\n<% } %>\n</div>\n";
+
+  my $expected = "<div>\n<% if (\$ok) { %>\n<p>Hello</p>\n<% } %>\n</div>\n";
+
+  is $pt->tidy($in), $expected, 'mixed EP block lines are not reindented';
+};
+
 done_testing;
