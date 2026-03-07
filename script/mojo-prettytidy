@@ -5,40 +5,51 @@ use common::sense;
 use feature 'signatures';
 
 use Getopt::Long qw(GetOptions);
+use File::Copy   qw(copy);
 use Mojo::PrettyTidy;
 use Pod::Usage qw(pod2usage);
 
-my $write   = 0;
-my $check   = 0;
-my $help    = 0;
-my $man     = 0;
-my $stdin   = 0;
-my $version = 0;
+my $write      = 0;
+my $check      = 0;
+my $help       = 0;
+my $man        = 0;
+my $stdin      = 0;
+my $version    = 0;
+my $backup     = 0;
+my $backup_ext = '.bak';
 
 GetOptions(
-  'write|w'   => \$write,
-  'check|c'   => \$check,
-  'stdin'     => \$stdin,
-  'version|V' => \$version,
-  'help|h'    => \$help,
-  'man'       => \$man,
-) or pod2usage(2);
+            'write|w'      => \$write,
+            'check|c'      => \$check,
+            'stdin'        => \$stdin,
+            'version|V'    => \$version,
+            'backup'       => \$backup,
+            'backup-ext=s' => \$backup_ext,
+            'help|h'       => \$help,
+            'man'          => \$man,
+) or pod2usage( 2 );
 
-pod2usage(1) if $help;
+pod2usage( 1 )             if $help;
 pod2usage( -verbose => 2 ) if $man;
 
-if ($version) {
+if ( $version ) {
   print "mojo-prettytidy $Mojo::PrettyTidy::VERSION\n";
   exit 0;
 }
 
+pod2usage( "--backup requires --write\n" ) if $backup && !$write;
+pod2usage( "--backup-ext requires --write\n" )
+    if defined( $backup_ext ) && $backup_ext ne '.bak' && !$write;
+pod2usage( "--stdin cannot be combined with --write\n" )  if $stdin && $write;
+pod2usage( "--stdin cannot be combined with --backup\n" ) if $stdin && $backup;
+
 my $pt = Mojo::PrettyTidy->new;
 
-if ($stdin) {
+if ( $stdin ) {
   my $input  = do { local $/; <STDIN> };
-  my $output = $pt->tidy($input);
+  my $output = $pt->tidy( $input );
 
-  if ($check) {
+  if ( $check ) {
     exit( $output eq $input ? 0 : 1 );
   }
 
@@ -48,17 +59,23 @@ if ($stdin) {
 
 my $file = shift @ARGV;
 
-pod2usage("No input file provided\n") unless defined $file;
-pod2usage("Too many arguments\n") if @ARGV;
+pod2usage( "No input file provided\n" ) unless defined $file;
+pod2usage( "Too many arguments\n" ) if @ARGV;
 
-my $input  = _slurp($file);
-my $output = $pt->tidy($input);
+my $input  = _slurp( $file );
+my $output = $pt->tidy( $input );
 
-if ($check) {
+if ( $check ) {
   exit( $output eq $input ? 0 : 1 );
 }
 
-if ($write) {
+if ( $write ) {
+  if ( $backup ) {
+    my $backup_path = $file . $backup_ext;
+    copy( $file, $backup_path )
+        or die "Cannot create backup '$backup_path' from '$file': $!";
+  }
+
   _spew( $file, $output );
   exit 0;
 }
@@ -66,7 +83,7 @@ if ($write) {
 print $output;
 exit 0;
 
-sub _slurp ($path) {
+sub _slurp ( $path ) {
   open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
   local $/;
   my $content = <$fh>;
@@ -78,7 +95,7 @@ sub _slurp ($path) {
 sub _spew ( $path, $content ) {
   open my $fh, '>', $path or die "Cannot open '$path' for writing: $!";
   print {$fh} $content or die "Cannot write '$path': $!";
-  close $fh or die "Cannot close '$path': $!";
+  close $fh            or die "Cannot close '$path': $!";
 }
 
 __END__
@@ -93,6 +110,8 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 
     mojo-prettytidy file.html.ep
     mojo-prettytidy --write file.html.ep
+    mojo-prettytidy --write --backup file.html.ep
+    mojo-prettytidy --write --backup-ext=.orig file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --version
@@ -111,6 +130,16 @@ By default, the formatted result is written to standard output.
 =head2 --write, -w
 
 Rewrite the input file in place.
+
+=head2 --backup
+
+When used with C<--write>, create a backup of the original file before
+rewriting it.
+
+=head2 --backup-ext
+
+When used with C<--write --backup>, choose the backup suffix.
+Default is C<.bak>.
 
 =head2 --check, -c
 

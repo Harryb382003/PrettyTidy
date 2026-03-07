@@ -6,3 +6,4 @@ Revision history for Mojo-PrettyTidy
       - Added narrow indentation pass for obvious HTML-only lines
       - Added CLI with --write, --check, --stdin, and --version
       - Added sample-driven and CLI tests
+      - Added --backup and --backup-ext support for safer in-place writes

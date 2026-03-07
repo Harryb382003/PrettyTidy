@@ -36,6 +36,8 @@ make install
 
 mojo-prettytidy file.html.ep
 mojo-prettytidy --write file.html.ep
+mojo-prettytidy --write --backup file.html.ep
+mojo-prettytidy --write --backup-ext=.orig --backup file.html.ep
 mojo-prettytidy --check file.html.ep
 mojo-prettytidy --stdin < file.html.ep
 mojo-prettytidy --version
@@ -55,6 +57,8 @@ script/mojo-prettytidy --stdin
 ## Current behavior
 
 Current versions perform conservative cleanup:
+
+When rewriting files in place, use --backup to preserve the original first.
 
 - normalize line endings to LF
 - remove trailing horizontal whitespace

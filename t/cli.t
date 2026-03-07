@@ -21,7 +21,6 @@ sub slurp ($path) {
   local $/;
   my $content = <$fh>;
   close $fh;
-
   return $content;
 }
 
@@ -37,7 +36,6 @@ subtest 'default mode writes tidied content to stdout' => sub {
   is $r->{exit},   0,               'exit status is 0';
   is $r->{stdout}, "alpha\nbeta\n", 'stdout contains tidied content';
   is $r->{stderr}, '',              'stderr is empty';
-
   is slurp($path), "alpha  \nbeta\t \n", 'input file was not modified';
 };
 
@@ -81,8 +79,58 @@ subtest '--write rewrites the file in place' => sub {
   is $r->{exit},   0,  '--write exits 0';
   is $r->{stdout}, '', 'stdout is empty';
   is $r->{stderr}, '', 'stderr is empty';
-
   is slurp($path), "alpha\nbeta\n", 'file was rewritten in place';
+};
+
+subtest '--write --backup creates backup and rewrites file' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha  \nbeta\t \n";
+  close $fh;
+
+  my $backup_path = $path . '.bak';
+
+  my $r = run_cmd(
+    argv => [ $^X, '-Ilib', $script, '--write', '--backup', $path ],
+  );
+
+  is $r->{exit},   0,  '--write --backup exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok -e $backup_path, 'backup file exists';
+  is slurp($backup_path), "alpha  \nbeta\t \n", 'backup contains original content';
+  is slurp($path),       "alpha\nbeta\n",       'original file was rewritten';
+};
+
+subtest '--write --backup-ext uses custom suffix' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha  \nbeta\t \n";
+  close $fh;
+
+  my $backup_path = $path . '.orig';
+
+  my $r = run_cmd(
+    argv => [ $^X, '-Ilib', $script, '--write', '--backup', '--backup-ext=.orig', $path ],
+  );
+
+  is $r->{exit},   0,  'custom backup suffix exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok -e $backup_path, 'custom backup file exists';
+  is slurp($backup_path), "alpha  \nbeta\t \n", 'custom backup contains original content';
+  is slurp($path),       "alpha\nbeta\n",       'original file was rewritten';
+};
+
+subtest '--backup without --write is rejected' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha  \nbeta\t \n";
+  close $fh;
+
+  my $r = run_cmd(
+    argv => [ $^X, '-Ilib', $script, '--backup', $path ],
+  );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--backup requires --write/, 'stderr explains invalid usage';
 };
 
 subtest '--stdin reads stdin and writes stdout' => sub {
