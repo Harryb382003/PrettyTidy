@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.40;
+use 5.40.0;
 use common::sense;
 
 use Getopt::Long qw(GetOptions);
