@@ -4,8 +4,7 @@ use common::sense;
 use Test::More;
 use File::Temp qw(tempfile);
 use File::Spec;
-use IPC::Open3;
-use Symbol qw(gensym);
+use IPC::Run3 qw(run3);
 
 my $script = File::Spec->catfile( qw(script mojo-prettytidy) );
 
@@ -13,21 +12,20 @@ ok -e $script, 'CLI script exists';
 ok -x $script, 'CLI script is executable';
 
 sub run_cmd {
-  my ( @args ) = @_;
+  my ( $args, $stdin ) = @_;
 
-  my $stderr = gensym;
-  my $pid    = open3( undef, my $out, $stderr, @args );
+  $stdin //= '';
 
-  local $/;
-  my $stdout = <$out>    // '';
-  my $errout = <$stderr> // '';
+  my $stdout = '';
+  my $stderr = '';
 
-  waitpid $pid, 0;
+  run3( [ $^X, '-Ilib', $script, @$args ], \$stdin, \$stdout, \$stderr );
+
   my $exit = $? >> 8;
 
   return {
           stdout => $stdout,
-          stderr => $errout,
+          stderr => $stderr,
           exit   => $exit,};
 }
 
@@ -47,7 +45,7 @@ subtest 'default mode writes tidied content to stdout' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd( $^X, '-Ilib', $script, $path );
+  my $r = run_cmd( [$path] );
 
   is $r->{exit},   0,               'exit status is 0';
   is $r->{stdout}, "alpha\nbeta\n", 'stdout contains tidied content';
@@ -61,7 +59,7 @@ subtest '--check returns 0 for tidy input' => sub {
   print {$fh} "alpha\nbeta\n";
   close $fh;
 
-  my $r = run_cmd( $^X, '-Ilib', $script, '--check', $path );
+  my $r = run_cmd( [ '--check', $path ] );
 
   is $r->{exit},   0,  '--check exits 0 when no changes are needed';
   is $r->{stdout}, '', 'stdout is empty';
@@ -73,7 +71,7 @@ subtest '--check returns 1 for untidy input' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd( $^X, '-Ilib', $script, '--check', $path );
+  my $r = run_cmd( [ '--check', $path ] );
 
   is $r->{exit},   1,  '--check exits 1 when changes would be made';
   is $r->{stdout}, '', 'stdout is empty';
@@ -85,13 +83,21 @@ subtest '--write rewrites the file in place' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd( $^X, '-Ilib', $script, '--write', $path );
+  my $r = run_cmd( [ '--write', $path ] );
 
   is $r->{exit},   0,  '--write exits 0';
   is $r->{stdout}, '', 'stdout is empty';
   is $r->{stderr}, '', 'stderr is empty';
 
   is slurp( $path ), "alpha\nbeta\n", 'file was rewritten in place';
+};
+
+subtest '--stdin reads stdin and writes stdout' => sub {
+  my $r = run_cmd( ['--stdin'], "alpha  \nbeta\t \n" );
+
+  is $r->{exit},   0,               '--stdin exits 0';
+  is $r->{stdout}, "alpha\nbeta\n", '--stdin writes tidied content';
+  is $r->{stderr}, '',              'stderr is empty';
 };
 
 done_testing;
