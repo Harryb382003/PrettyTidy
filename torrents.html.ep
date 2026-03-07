@@ -1,0 +1,386 @@
+% layout 'main';
+% title 'QBTL - Torrents';
+
+% my $mode   = stash('mode')  // 'paginate';
+% my $per    = stash('per')   // 20;
+% my $page   = stash('page')  // 1;
+% my $pages  = stash('pages') // 1;
+% my $q      = stash('q')     // '';
+% my $found  = stash('found') // 0;
+% my $start_n = stash('start_n') // 0;
+% my $end_n   = stash('end_n') // 0;
+% my $sample = stash('sample') || [];
+% my $human  = stash('human');
+
+<h1>Local torrents (from cache)</h1>
+<form method="get" action="/torrents" style="margin: 0 0 12px 0;">
+  <label>
+    Search:
+    <input type="text" name="q" value="<%= $q %>" style="min-width: 380px;" placeholder="ih, name, or source_path">
+  </label>
+
+  <label style="margin-left: 12px;">
+    Mode:
+    <select name="mode" onchange="this.form.submit()">
+      <option value="scroll" <%= $mode eq 'scroll' ? 'selected' : '' %>>scroll</option>
+      <option value="paginate" <%= $mode eq 'paginate' ? 'selected' : '' %>>paginate</option>
+    </select>
+  </label>
+
+  % if ($mode eq 'paginate') {
+    <label style="margin-left: 12px;">
+      Per page:
+      <select name="per" onchange="this.form.submit()">
+        % for my $n (20, 50, 100, 200, 500) {
+          <option value="<%= $n %>" <%= $per == $n ? 'selected' : '' %>><%= $n %></option>
+        % }
+      </select>
+    </label>
+    <input type="hidden" name="page" value="1">
+  % }
+
+  <button type="submit" style="margin-left: 12px;">Go</button>
+</form>
+
+<p>
+  Found: <%= $found %>
+  % if ($found) {
+    — showing <%= $start_n %>–<%= $end_n %>
+    % if ($mode eq 'paginate') {
+      (page <%= $page %> / <%= $pages %>)
+    % }
+  % }
+</p>
+
+% if ($mode eq 'scroll') {
+  <div style="max-height: 70vh; overflow: auto; border: 1px solid #ccc;">
+% }
+
+<table id="sortable" border="1" cellspacing="0" cellpadding="6">
+  <thead>
+    <tr>
+      <th data-type="text">name</th>
+      <th data-type="text">ih</th>
+      <th data-type="number">total_size</th>
+      <th data-type="number">files</th>
+      <th data-type="text">source_path</th>
+      <th data-type="text">action</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    % for my $t (@$sample) {
+      <tr>
+        <td><%= $t->{name} %></td>
+        <td><code><%= $t->{ih} %></code></td>
+        <td><%= $human ? $human->($t->{total_size}) : ($t->{total_size}||0) %></td>
+        <td><%= $t->{files_count} %></td>
+        <td><%= $t->{source_path} %></td>
+        <td>
+          % if (stash('dev_mode')) {
+            <div class="qbtl-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+              <form method="post" action="/qbt/add_one" style="display:inline; margin:0;">
+                <!-- canonical field name is ih; keep hash too until /qbt/add_one is fully migrated -->
+                <input type="hidden" name="ih" value="<%= $t->{ih} %>">
+                <input type="hidden" name="hash" value="<%= $t->{ih} %>">
+                <input type="hidden" name="source_path" value="<%= $t->{source_path} %>">
+                <input type="hidden" name="confirm" value="1">
+                % my $return_to = $c->req->url->path->to_string // '/';
+                % my $qs = $c->req->url->query->to_string // '';
+                % $return_to .= "?$qs" if length $qs;
+                % $return_to = '/torrents' if $return_to !~ m{\A/} || $return_to =~ m{://} || $return_to =~ m{[\r\n]};
+                % # tag this return as "came from Add action"
+                % $return_to .= (index($return_to, '?') >= 0 ? '&' : '?') . 'autoback=1';
+
+                <input type="hidden" name="return_to" value="<%= $return_to %>">
+                <button type="submit">Add</button>
+              </form>
+              <form method="get" action="/qbt/view" target="_blank" style="display:inline; margin:0;">
+                <input type="hidden" name="ih" value="<%= $t->{ih} %>">
+                <input type="hidden" name="return_to" value="<%= url_for->to_string %>">
+                <button type="button" onclick="qbtlOpenViewModal('<%= $t->{ih} %>')">View</button>
+              </form>
+            </div>
+          % } else {
+            <em>dev</em>
+          % }
+        </td>
+      </tr>
+    % }
+  </tbody>
+</table>
+<div id="viewModal"
+    style="display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.55);
+    z-index:9999;">
+
+  <div style="
+    position:absolute; top:6%; left:50%; transform:translateX(-50%);
+    width:min(1100px, 92vw); max-height:88vh; overflow:auto;
+    background:#151515; color:#eee;
+    border:1px solid #333; border-radius:12px;
+    box-shadow:0 18px 60px rgba(0,0,0,.6);
+    padding:14px;
+    font-family: system-ui, -apple-system, sans-serif;">
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+      <div style="min-width:0;">
+        <div id="vmTitle" style="font-size:16px; font-weight:700; color:#fff; word-break:break-word;">
+          (loading)
+        </div>
+
+        <div id="vmMeta" style="margin-top:6px; font-size:12px; opacity:.85; word-break:break-all;"></div>
+
+        <div id="vmPayload" style="margin-top:10px;"></div>
+
+        <div style="margin-top:8px; font-size:12px; opacity:.65;">
+          Cached meta; payload section may consult filesystem/index
+        </div>
+
+        <div style="display:flex; gap:8px; flex:0 0 auto; align-items:center;">
+          <form id="vmAddForm" method="post" action="/qbt/add_one" style="margin:0;">
+            <input type="hidden" name="ih" value="">
+            <input type="hidden" name="confirm" value="1">
+            <input type="hidden" name="return_to" value="<%= url_for->to_string %>">
+            <button type="submit"
+                    style="background:#2d6cdf;
+                    color:#fff; border:0;
+                    border-radius:8px;
+                    padding:8px 12px;
+                    font-weight:600;
+                    cursor:pointer;">
+                    Add
+            </button>
+          </form>
+
+            <button type="button"
+                  onclick="qbtlCloseViewModal()"
+                  style="background:#2b2b2b;
+                  color:#eee;
+                  border:1px solid #444;
+                  border-radius:8px;
+                  padding:8px 12px;
+                  font-weight:600;
+                  cursor:pointer;">
+                  Done
+            </button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px; border-top:1px solid #2a2a2a; padding-top:10px;">
+      <div id="vmCount" style="font-weight:700; margin-bottom:6px;">Contents</div>
+      <ul id="vmList" style="margin:0; padding-left:18px; line-height:1.35;"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+function qbtlCloseViewModal() {
+  const m = document.getElementById('viewModal');
+  if (m) m.style.display = 'none';
+}
+
+async function qbtlOpenViewModal(ih) {
+  const m = document.getElementById('viewModal');
+  if (!m) return;
+
+  // reset UI
+  document.getElementById('vmTitle').textContent = '(loading)';
+  document.getElementById('vmMeta').textContent  = '';
+  document.getElementById('vmCount').textContent = 'Contents';
+
+  const payloadBox = document.getElementById('vmPayload');
+  if (payloadBox) payloadBox.innerHTML = '';
+
+  const ul = document.getElementById('vmList');
+  ul.innerHTML = '';
+
+  // wire Add form
+  const f = document.getElementById('vmAddForm');
+  f.querySelector('input[name="ih"]').value = ih;
+
+  m.style.display = 'block';
+
+  const res = await fetch('/api/view_meta?ih=' + encodeURIComponent(ih), {
+    headers: { 'Accept': 'application/json' }
+  });
+
+  if (!res.ok) {
+    document.getElementById('vmTitle').textContent = '(failed)';
+    document.getElementById('vmMeta').textContent  = 'HTTP ' + res.status;
+    return;
+  }
+
+  const j = await res.json();
+
+  // title + meta
+  document.getElementById('vmTitle').textContent =
+    (j.name && j.name.trim()) ? j.name : '(no name)';
+
+  document.getElementById('vmMeta').textContent =
+    (j.ih || ih) + (j.source_path ? '  |  ' + j.source_path : '');
+
+  // ---------- Payload block (before file list) ----------
+  if (payloadBox) {
+    const p = (j && typeof j === 'object') ? (j.payload || null) : null;
+
+    // Always show the section if payload object exists OR if you want it unconditional.
+    if (!p || typeof p !== 'object') {
+  // show a tiny "Payload: (not provided)" block if you want
+} else {
+      const wrap = document.createElement('div');
+      wrap.style.marginTop = '10px';
+      wrap.style.fontSize = '12px';
+      wrap.style.opacity = '0.92';
+
+      const hdr = document.createElement('div');
+      hdr.textContent = 'Payload';
+      hdr.style.fontWeight = '700';
+      hdr.style.marginBottom = '6px';
+      wrap.appendChild(hdr);
+
+      function addLine(label, value) {
+        const row = document.createElement('div');
+        row.style.marginTop = '6px';
+        row.style.wordBreak = 'break-all';
+
+        const lab = document.createElement('span');
+        lab.textContent = label + ': ';
+        lab.style.opacity = '0.7';
+        row.appendChild(lab);
+
+        const code = document.createElement('code');
+        code.textContent = value && String(value).length ? String(value) : '(none)';
+        code.style.background = '#0f0f0f';
+        code.style.padding = '2px 6px';
+        code.style.borderRadius = '6px';
+        code.style.border = '1px solid #2a2a2a';
+        code.style.color = '#ddd';
+        row.appendChild(code);
+
+        wrap.appendChild(row);
+      }
+
+      addLine('hit_path',     p.hit_path);
+      addLine('savepath',     p.savepath);
+      addLine('payload_root', p.payload_root);
+
+      const status = document.createElement('div');
+      status.style.marginTop = '8px';
+      status.style.opacity = '0.8';
+      status.style.wordBreak = 'break-word';
+      status.textContent = 'status: ' + (p.ok ? 'ok' : (p.why ? String(p.why) : '(not found)'));
+      wrap.appendChild(status);
+
+      payloadBox.appendChild(wrap);
+    }
+  }
+
+  // files list
+  const files = Array.isArray(j.files) ? j.files : [];
+  document.getElementById('vmCount').textContent = 'Contents (' + files.length + ')';
+
+  for (const p of files) {
+    const li = document.createElement('li');
+    li.textContent = p;
+    ul.appendChild(li);
+  }
+}
+</script>
+
+% if ($mode eq 'scroll') {
+  </div>
+% }
+
+% if ($mode eq 'paginate' && $pages > 1) {
+  <div style="margin-top: 12px;">
+    % my $qs = $q;
+    % $qs =~ s/([^A-Za-z0-9_.~-])/sprintf("%%%02X", ord($1))/eg;  # crude url-escape
+
+    % if ($page > 1) {
+      <a href="/torrents?mode=paginate&per=<%= $per %>&page=1&q=<%= $qs %>">First</a>
+      |
+      <a href="/torrents?mode=paginate&per=<%= $per %>&page=<%= $page - 1 %>&q=<%= $qs %>">Prev</a>
+    % } else {
+      First | Prev
+    % }
+
+    &nbsp;&nbsp; Page <%= $page %> / <%= $pages %> &nbsp;&nbsp;
+
+    % if ($page < $pages) {
+      <a href="/torrents?mode=paginate&per=<%= $per %>&page=<%= $page + 1 %>&q=<%= $qs %>">Next</a>
+      |
+      <a href="/torrents?mode=paginate&per=<%= $per %>&page=<%= $pages %>&q=<%= $qs %>">Last</a>
+    % } else {
+      Next | Last
+    % }
+  </div>
+% }
+
+<script>
+
+(() => {
+  const table = document.getElementById('sortable');
+  if (!table) return;
+
+  const getCellValue = (tr, idx) => tr.children[idx].innerText.trim();
+
+  const comparer = (idx, type, asc) => (a, b) => {
+    let v1 = getCellValue(asc ? a : b, idx);
+    let v2 = getCellValue(asc ? b : a, idx);
+
+    if (type === 'number') {
+      const n1 = parseFloat(v1.replace(/[^0-9.]/g, '')) || 0;
+      const n2 = parseFloat(v2.replace(/[^0-9.]/g, '')) || 0;
+      return n1 - n2;
+    }
+
+    return v1.localeCompare(v2, undefined, { numeric: true, sensitivity: 'base' });
+  };
+
+  const key = "qbtltorrents_sort";
+  const glyph = (asc) => asc ? " ▲" : " ▼";
+
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) {}
+
+  const ths = [...table.querySelectorAll("th")];
+
+  const applySort = (idx, asc) => {
+    const th = ths[idx];
+    if (!th) return;
+
+    const type = th.dataset.type || 'text';
+    const tbody = table.tBodies[0];
+    const rows = [...tbody.querySelectorAll("tr")];
+
+    rows.sort(comparer(idx, type, asc)).forEach(tr => tbody.appendChild(tr));
+
+    ths.forEach(h => { h.textContent = h.textContent.replace(/[ ▲▼]+$/, ''); });
+    th.textContent = th.textContent.replace(/[ ▲▼]+$/, '') + glyph(asc);
+
+    localStorage.setItem(key, JSON.stringify({ idx, asc }));
+  };
+
+  ths.forEach((th, idx) => {
+    let asc = true;
+    th.style.cursor = 'pointer';
+
+    th.addEventListener('click', () => {
+      th.textContent = th.textContent.replace(/[ ▲▼]+$/, '');
+      applySort(idx, asc);
+      asc = !asc;
+    });
+  });
+
+  if (saved && typeof saved.idx === 'number') {
+    applySort(saved.idx, !!saved.asc);
+  }
+})();
+</script>
+
+
+
+
