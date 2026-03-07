@@ -1,6 +1,8 @@
 Revision history for Mojo-PrettyTidy
 
-0.01  2026-03-06
+0.01  2026-03-07
       - Initial development release
       - Added conservative normalization
-      - Added CLI with --write, --check, and --stdin
+      - Added narrow indentation pass for obvious HTML-only lines
+      - Added CLI with --write, --check, --stdin, and --version
+      - Added sample-driven and CLI tests
