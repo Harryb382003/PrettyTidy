@@ -58,8 +58,9 @@ sub _apply_basic_indentation ( $self, $text ) {
 
   my @lines = split /\n/, $text, -1;
   my @out;
-  my $level = 0;
-  my $step  = ' ' x $self->{indent_width};
+  my $level            = 0;
+  my $step             = ' ' x $self->{indent_width};
+  my $in_comment_block = 0;
 
   for my $line (@lines) {
     if ( $line =~ /^\s*$/ ) {
@@ -75,6 +76,18 @@ sub _apply_basic_indentation ( $self, $text ) {
     my $trimmed = $line;
     $trimmed =~ s/^\s+//;
     $trimmed =~ s/\s+$//;
+
+    if ($in_comment_block) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_comment_block = 0 if _is_html_comment_end_line($trimmed);
+      next;
+    }
+
+    if ( _is_html_comment_start_line($trimmed) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_comment_block = 1 unless _is_html_comment_line($trimmed);
+      next;
+    }
 
     if ( _is_doctype_line($trimmed) ) {
       push @out, ( $step x $level ) . $trimmed;
@@ -120,6 +133,14 @@ sub _is_doctype_line ( $line ) {
 
 sub _is_html_comment_line ( $line ) {
   return $line =~ /^\s*<!--.*-->\s*$/ ? 1 : 0;
+}
+
+sub _is_html_comment_end_line ($line) {
+  return $line =~ /-->\s*$/ ? 1 : 0;
+}
+
+sub _is_html_comment_start_line ($line) {
+  return $line =~ /^\s*<!--/ ? 1 : 0;
 }
 
 sub _is_plain_text_line ( $line ) {

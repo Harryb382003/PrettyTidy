@@ -3,8 +3,10 @@ use common::sense;
 use feature 'signatures';
 
 use Test::More;
-use Mojo::PrettyTidy;
 use File::Spec;
+
+use lib 'lib';
+use Mojo::PrettyTidy;
 
 my $pt = Mojo::PrettyTidy->new;
 

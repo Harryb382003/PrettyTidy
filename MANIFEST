@@ -1,0 +1,17 @@
+Changes
+lib/Mojo/PrettyTidy.pm
+lib/Mojo/PrettyTidy/Diff.pm
+LICENSE
+Makefile.PL
+MANIFEST
+README.md
+script/mojo-prettytidy
+share/samples/sample_1.html.ep
+t/00-load.t
+t/basic.t
+t/cli.t
+t/diff.t
+t/indent.t
+t/lib/Test/CLI/Capture.pm
+t/normalize.t
+t/samples.t

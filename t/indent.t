@@ -67,14 +67,24 @@ subtest 'mixed EP block tag line is left alone' => sub {
   is $pt->tidy( $in ), $expected, 'mixed EP block lines are not reindented';
 };
 
-subtest 'multiline html comment behavior is current and explicit' => sub {
+subtest 'multiline html comment block is indented consistently' => sub {
   my $in = "<div>\n<!--\ncomment\n-->\n<p>\nHello\n</p>\n</div>\n";
 
   my $expected =
-      "<div>\n<!--\n  comment\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
+      "<div>\n  <!--\n  comment\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
-      'multiline comment handling is currently partial and line-based';
+      'multiline comment block is indented at the current level';
+};
+
+subtest 'multiline html comment near EP lines keeps EP safe' => sub {
+  my $in = "<div>\n<%= \$title %>\n<!--\nnote\n-->\n<p>\nHello\n</p>\n</div>\n";
+
+  my $expected =
+"<div>\n<%= \$title %>\n  <!--\n  note\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
+
+  is $pt->tidy( $in ), $expected,
+      'multiline comment block indents normally while EP line stays untouched';
 };
 
 subtest 'percent directive lines are left structurally alone' => sub {

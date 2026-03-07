@@ -3,6 +3,7 @@ use common::sense;
 use feature 'signatures';
 
 use Test::More;
+use lib 'lib';
 use Mojo::PrettyTidy;
 
 my $pt = Mojo::PrettyTidy->new;
