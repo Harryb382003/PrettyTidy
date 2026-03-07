@@ -8,8 +8,8 @@ our $VERSION = '0.01';
 
 sub new ( $class, %args ) {
   my $self = bless {
-    indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
-    tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
+          indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
+          tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
   }, $class;
 
   return $self;
@@ -20,10 +20,10 @@ sub tidy ( $self, $input ) {
 
   my $output = $input;
 
-  $output = $self->_normalize_line_endings($output);
-  $output = $self->_strip_trailing_whitespace($output);
-  $output = $self->_apply_basic_indentation($output);
-  $output = $self->_ensure_final_newline($output);
+  $output = $self->_normalize_line_endings( $output );
+  $output = $self->_strip_trailing_whitespace( $output );
+  $output = $self->_apply_basic_indentation( $output );
+  $output = $self->_ensure_final_newline( $output );
 
   return $output;
 }
@@ -31,7 +31,7 @@ sub tidy ( $self, $input ) {
 sub check ( $self, $input ) {
   $input = '' unless defined $input;
 
-  my $output = $self->tidy($input);
+  my $output = $self->tidy( $input );
 
   return $output eq $input ? 1 : 0;
 }
@@ -61,13 +61,13 @@ sub _apply_basic_indentation ( $self, $text ) {
   my $level = 0;
   my $step  = ' ' x $self->{indent_width};
 
-  for my $line (@lines) {
+  for my $line ( @lines ) {
     if ( $line =~ /^\s*$/ ) {
       push @out, '';
       next;
     }
 
-    if ( _line_contains_ep($line) ) {
+    if ( _line_contains_ep( $line ) ) {
       push @out, $line;
       next;
     }
@@ -76,19 +76,24 @@ sub _apply_basic_indentation ( $self, $text ) {
     $trimmed =~ s/^\s+//;
     $trimmed =~ s/\s+$//;
 
-    if ( _is_pure_closing_tag_line($trimmed) ) {
+    if ( _is_pure_closing_tag_line( $trimmed ) ) {
       $level-- if $level > 0;
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_pure_opening_tag_line($trimmed) ) {
+    if ( _is_pure_opening_tag_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       $level++;
       next;
     }
 
-    if ( _is_pure_void_tag_line($trimmed) ) {
+    if ( _is_pure_void_tag_line( $trimmed ) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      next;
+    }
+
+    if ( _is_plain_text_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
@@ -99,33 +104,40 @@ sub _apply_basic_indentation ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _is_pure_opening_tag_line ($line) {
+sub _is_plain_text_line ( $line ) {
+  return 0 if !defined $line || $line eq '';
+  return 0 if _line_contains_ep( $line );
+  return 0 if $line =~ /</;
+  return 1;
+}
+
+sub _is_pure_opening_tag_line ( $line ) {
   return 0 if $line =~ /<%/;
   return 0 if $line =~ m{^</};
 
   return $line =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?>\s*$}
-    ? !_is_void_html_tag($1)
-    : 0;
+      ? !_is_void_html_tag( $1 )
+      : 0;
 }
 
-sub _is_pure_closing_tag_line ($line) {
+sub _is_pure_closing_tag_line ( $line ) {
   return $line =~ m{^</[A-Za-z][A-Za-z0-9:_-]*>\s*$} ? 1 : 0;
 }
 
-sub _is_pure_void_tag_line ($line) {
+sub _is_pure_void_tag_line ( $line ) {
   return 0 if $line =~ /<%/;
 
   return $line =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?/?>\s*$}
-    ? _is_void_html_tag($1) || $line =~ m{/>$}
-    : 0;
+      ? _is_void_html_tag( $1 ) || $line =~ m{/>$}
+      : 0;
 }
 
-sub _is_void_html_tag ($tag) {
+sub _is_void_html_tag ( $tag ) {
   state %void = map { $_ => 1 } qw(
-    area base br col embed hr img input link meta param source track wbr
+      area base br col embed hr img input link meta param source track wbr
   );
 
-  return $void{ lc $tag } ? 1 : 0;
+  return $void{lc $tag} ? 1 : 0;
 }
 
 sub _ensure_final_newline ( $self, $text ) {
@@ -136,7 +148,7 @@ sub _ensure_final_newline ( $self, $text ) {
   return $text;
 }
 
-sub _line_contains_ep ($line) {
+sub _line_contains_ep ( $line ) {
   return $line =~ /<%|^\s*%/ ? 1 : 0;
 }
 
