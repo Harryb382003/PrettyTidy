@@ -61,13 +61,13 @@ sub _apply_basic_indentation ( $self, $text ) {
   my $level = 0;
   my $step  = ' ' x $self->{indent_width};
 
-  for my $line ( @lines ) {
+  for my $line (@lines) {
     if ( $line =~ /^\s*$/ ) {
       push @out, '';
       next;
     }
 
-    if ( _line_contains_ep( $line ) ) {
+    if ( _line_contains_ep($line) ) {
       push @out, $line;
       next;
     }
@@ -76,24 +76,34 @@ sub _apply_basic_indentation ( $self, $text ) {
     $trimmed =~ s/^\s+//;
     $trimmed =~ s/\s+$//;
 
-    if ( _is_pure_closing_tag_line( $trimmed ) ) {
+    if ( _is_doctype_line($trimmed) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      next;
+    }
+
+    if ( _is_html_comment_line($trimmed) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      next;
+    }
+
+    if ( _is_pure_closing_tag_line($trimmed) ) {
       $level-- if $level > 0;
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_pure_opening_tag_line( $trimmed ) ) {
+    if ( _is_pure_opening_tag_line($trimmed) ) {
       push @out, ( $step x $level ) . $trimmed;
       $level++;
       next;
     }
 
-    if ( _is_pure_void_tag_line( $trimmed ) ) {
+    if ( _is_pure_void_tag_line($trimmed) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_plain_text_line( $trimmed ) ) {
+    if ( _is_plain_text_line($trimmed) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
@@ -102,6 +112,14 @@ sub _apply_basic_indentation ( $self, $text ) {
   }
 
   return join "\n", @out;
+}
+
+sub _is_doctype_line ( $line ) {
+  return $line =~ /^\s*<!DOCTYPE\b/i ? 1 : 0;
+}
+
+sub _is_html_comment_line ( $line ) {
+  return $line =~ /^\s*<!--.*-->\s*$/ ? 1 : 0;
 }
 
 sub _is_plain_text_line ( $line ) {
