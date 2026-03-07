@@ -1,4 +1,4 @@
-use 5.40.0;
+use v5.40.0;
 use common::sense;
 use feature 'signatures';
 
