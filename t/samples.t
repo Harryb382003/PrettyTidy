@@ -1,4 +1,4 @@
-use v5.40;
+use v5.40.0;
 use common::sense;
 
 use Test::More;
@@ -23,8 +23,23 @@ my $output = $pt->tidy( $input );
 
 ok defined $output,   'tidy returned output';
 ok length( $output ), 'output is not empty';
-
 like $output, qr/\n\z/, 'output ends with a newline';
+
+my $in_pct_lines  = () = $input  =~ /^%/mg;
+my $out_pct_lines = () = $output =~ /^%/mg;
+is $out_pct_lines, $in_pct_lines, 'percent directive line count preserved';
+
+my $in_ep_tags  = () = $input  =~ /<%[=%]?/g;
+my $out_ep_tags = () = $output =~ /<%[=%]?/g;
+is $out_ep_tags, $in_ep_tags, 'EP tag count preserved';
+
+if ( $input =~ /<%=/ ) {
+  like $output, qr/<%=/, 'expression tag survives';
+}
+
+if ( $input =~ /<%/ ) {
+  like $output, qr/<%/, 'EP tag survives';
+}
 
 pass 'sample-driven smoke test completed';
 
