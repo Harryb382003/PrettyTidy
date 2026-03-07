@@ -1,5 +1,6 @@
 use v5.40.0;
 use common::sense;
+use feature 'signatures';
 
 use Test::More;
 use Mojo::PrettyTidy;

@@ -2,6 +2,7 @@
 
 use v5.40.0;
 use common::sense;
+use feature 'signatures';
 
 use Getopt::Long qw(GetOptions);
 use Mojo::PrettyTidy;
@@ -58,9 +59,7 @@ if ( $write ) {
 print $output;
 exit 0;
 
-sub _slurp {
-  my ( $path ) = @_;
-
+sub _slurp ( $path ) {
   open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
   local $/;
   my $content = <$fh>;
@@ -69,9 +68,7 @@ sub _slurp {
   return $content;
 }
 
-sub _spew {
-  my ( $path, $content ) = @_;
-
+sub _spew ( $path, $content ) {
   open my $fh, '>', $path or die "Cannot open '$path' for writing: $!";
   print {$fh} $content or die "Cannot write '$path': $!";
   close $fh            or die "Cannot close '$path': $!";
