@@ -37,6 +37,10 @@ if ( $input =~ /<%=/ ) {
   like $output, qr/<%=/, 'expression tag survives';
 }
 
+if ( $input =~ /<%==/ ) {
+  like $output, qr/<%==/, 'escaped expression tags survive';
+}
+
 if ( $input =~ /<%/ ) {
   like $output, qr/<%/, 'EP tag survives';
 }

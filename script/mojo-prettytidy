@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.40.0;
+use v5.40.0;
 use common::sense;
 
 use Getopt::Long qw(GetOptions);
@@ -34,7 +34,6 @@ if ( $stdin ) {
     exit( $output eq $input ? 0 : 1 );
   }
 
-  print {$ARGV[0] ? *STDERR : *STDOUT} '' if 0;    # quiet placeholder
   print $output;
   exit 0;
 }
@@ -44,11 +43,7 @@ my $file = shift @ARGV;
 pod2usage( "No input file provided\n" ) unless defined $file;
 pod2usage( "Too many arguments\n" ) if @ARGV;
 
-open my $in_fh, '<', $file or die "Cannot open '$file' for reading: $!";
-local $/;
-my $input = <$in_fh>;
-close $in_fh;
-
+my $input  = _slurp( $file );
 my $output = $pt->tidy( $input );
 
 if ( $check ) {
@@ -56,14 +51,31 @@ if ( $check ) {
 }
 
 if ( $write ) {
-  open my $out_fh, '>', $file or die "Cannot open '$file' for writing: $!";
-  print {$out_fh} $output or die "Cannot write '$file': $!";
-  close $out_fh           or die "Cannot close '$file': $!";
+  _spew( $file, $output );
   exit 0;
 }
 
 print $output;
 exit 0;
+
+sub _slurp {
+  my ( $path ) = @_;
+
+  open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
+  local $/;
+  my $content = <$fh>;
+  close $fh;
+
+  return $content;
+}
+
+sub _spew {
+  my ( $path, $content ) = @_;
+
+  open my $fh, '>', $path or die "Cannot open '$path' for writing: $!";
+  print {$fh} $content or die "Cannot write '$path': $!";
+  close $fh            or die "Cannot close '$path': $!";
+}
 
 __END__
 
