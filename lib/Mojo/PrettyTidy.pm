@@ -1,6 +1,6 @@
 package Mojo::PrettyTidy;
 
-use 5.40.0;
+use v5.40.0;
 use common::sense;
 
 our $VERSION = '0.01';
@@ -23,10 +23,9 @@ sub tidy {
 
   my $output = $input;
 
-  $output =~ s/[ \t]+$//mg;
-  $output =~ s/\r\n/\n/g;
-  $output =~ s/\r/\n/g;
-  $output =~ s/\n*\z/\n/;
+  $output = $self->_normalize_line_endings( $output );
+  $output = $self->_strip_trailing_whitespace( $output );
+  $output = $self->_ensure_final_newline( $output );
 
   return $output;
 }
@@ -34,9 +33,42 @@ sub tidy {
 sub check {
   my ( $self, $input ) = @_;
 
+  $input = '' unless defined $input;
+
   my $output = $self->tidy( $input );
 
-  return $output eq ( defined $input ? $input : '' ) ? 1 : 0;
+  return $output eq $input ? 1 : 0;
+}
+
+sub _normalize_line_endings {
+  my ( $self, $text ) = @_;
+
+  $text = '' unless defined $text;
+
+  $text =~ s/\r\n/\n/g;
+  $text =~ s/\r/\n/g;
+
+  return $text;
+}
+
+sub _strip_trailing_whitespace {
+  my ( $self, $text ) = @_;
+
+  $text = '' unless defined $text;
+
+  $text =~ s/[ \t]+$//mg;
+
+  return $text;
+}
+
+sub _ensure_final_newline {
+  my ( $self, $text ) = @_;
+
+  $text = '' unless defined $text;
+
+  $text =~ s/\n*\z/\n/;
+
+  return $text;
 }
 
 1;
@@ -120,6 +152,23 @@ In version 0.01 this method performs only conservative cleanup:
 
 Returns true if C<tidy> would leave the input unchanged, false if
 changes would be made.
+
+=head1 INTERNAL METHODS
+
+These methods are currently private implementation details and may
+change without notice.
+
+=head2 _normalize_line_endings
+
+Normalizes CRLF and CR line endings to LF.
+
+=head2 _strip_trailing_whitespace
+
+Removes trailing spaces and tabs at end of line.
+
+=head2 _ensure_final_newline
+
+Ensures the document ends with exactly one newline.
 
 =head1 DESIGN GOALS
 
