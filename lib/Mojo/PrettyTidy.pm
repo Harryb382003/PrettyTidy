@@ -36,87 +36,131 @@ sub check ( $self, $input ) {
   return $output eq $input ? 1 : 0;
 }
 
-sub _normalize_line_endings ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/\r\n/\n/g;
-  $text =~ s/\r/\n/g;
-
-  return $text;
-}
-
-sub _strip_trailing_whitespace ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/[ \t]+$//mg;
-
-  return $text;
-}
-
 sub _apply_basic_indentation ( $self, $text ) {
   $text = '' unless defined $text;
 
   my @lines = split /\n/, $text, -1;
   my @out;
-  my $level            = 0;
-  my $step             = ' ' x $self->{indent_width};
-  my $in_comment_block = 0;
 
-  for my $line (@lines) {
+  my $level                 = 0;
+  my $step                  = ' ' x $self->{indent_width};
+  my $in_comment_block      = 0;
+  my $in_script_block       = 0;
+  my $in_style_block        = 0;
+  my $in_inline_style_block = 0;
+  my $inline_style_base     = 0;
+  my @inline_style_lines;
+
+  for my $line ( @lines ) {
+    my $trimmed = $line;
+    $trimmed =~ s/^\s+//;
+    $trimmed =~ s/\s+$//;
+
+    if ( $in_inline_style_block ) {
+      push @inline_style_lines, $line;
+
+      if ( _is_inline_style_end_line( $trimmed ) ) {
+        push @out,
+            $self->_format_inline_style_block( \@inline_style_lines,
+                                               $inline_style_base, $step, );
+
+        @inline_style_lines    = ();
+        $in_inline_style_block = 0;
+      }
+
+      next;
+    }
+
     if ( $line =~ /^\s*$/ ) {
       push @out, '';
       next;
     }
 
-    if ( _line_contains_ep($line) ) {
+    if ( _line_contains_ep( $line ) ) {
       push @out, $line;
       next;
     }
 
-    my $trimmed = $line;
-    $trimmed =~ s/^\s+//;
-    $trimmed =~ s/\s+$//;
-
-    if ($in_comment_block) {
+    if ( $in_comment_block ) {
       push @out, ( $step x $level ) . $trimmed;
-      $in_comment_block = 0 if _is_html_comment_end_line($trimmed);
+      $in_comment_block = 0 if _is_html_comment_end_line( $trimmed );
       next;
     }
 
-    if ( _is_html_comment_start_line($trimmed) ) {
+    if ( $in_script_block ) {
       push @out, ( $step x $level ) . $trimmed;
-      $in_comment_block = 1 unless _is_html_comment_line($trimmed);
+      $in_script_block = 0 if _is_script_end_line( $trimmed );
       next;
     }
 
-    if ( _is_doctype_line($trimmed) ) {
+    if ( $in_style_block ) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_style_block = 0 if _is_style_end_line( $trimmed );
+      next;
+    }
+
+    if ( _is_inline_style_start_line( $trimmed ) ) {
+      my $tag = _inline_style_tag_name( $trimmed );
+
+      $in_inline_style_block = 1;
+      $inline_style_base     = $level;
+      @inline_style_lines    = ( $line );
+
+      if ( defined $tag
+           && !_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+      {
+        $level++;
+      }
+
+      next;
+    }
+
+    if ( _is_html_comment_start_line( $trimmed ) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_comment_block = 1 unless _is_html_comment_line( $trimmed );
+      next;
+    }
+
+    if ( _is_script_start_line( $trimmed ) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_script_block = 1 unless _is_script_end_line( $trimmed );
+      next;
+    }
+
+    if ( _is_style_start_line( $trimmed ) ) {
+      push @out, ( $step x $level ) . $trimmed;
+      $in_style_block = 1 unless _is_style_end_line( $trimmed );
+      next;
+    }
+
+    if ( _is_doctype_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_html_comment_line($trimmed) ) {
+    if ( _is_html_comment_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_pure_closing_tag_line($trimmed) ) {
+    if ( _is_pure_closing_tag_line( $trimmed ) ) {
       $level-- if $level > 0;
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_pure_opening_tag_line($trimmed) ) {
+    if ( _is_pure_opening_tag_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       $level++;
       next;
     }
 
-    if ( _is_pure_void_tag_line($trimmed) ) {
+    if ( _is_pure_void_tag_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
 
-    if ( _is_plain_text_line($trimmed) ) {
+    if ( _is_plain_text_line( $trimmed ) ) {
       push @out, ( $step x $level ) . $trimmed;
       next;
     }
@@ -127,6 +171,38 @@ sub _apply_basic_indentation ( $self, $text ) {
   return join "\n", @out;
 }
 
+sub _format_inline_style_block ( $self, $lines, $base, $step ) {
+  my $has_ep = grep { _line_contains_ep( $_ ) } @$lines;
+
+  return @$lines if $has_ep;
+
+  my @out;
+
+  for my $i ( 0 .. $#$lines ) {
+    my $line    = $lines->[$i];
+    my $trimmed = $line;
+    $trimmed =~ s/^\s+//;
+    $trimmed =~ s/\s+$//;
+
+    if ( $i == 0 ) {
+      push @out, ( $step x $base ) . $trimmed;
+    }
+    elsif ( $i == $#$lines ) {
+      if ( _is_inline_style_closing_only_line( $trimmed ) ) {
+        push @out, ( $step x $base ) . $trimmed;
+      }
+      else {
+        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+      }
+    }
+    else {
+      push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+    }
+  }
+
+  return @out;
+}
+
 sub _is_doctype_line ( $line ) {
   return $line =~ /^\s*<!DOCTYPE\b/i ? 1 : 0;
 }
@@ -135,12 +211,30 @@ sub _is_html_comment_line ( $line ) {
   return $line =~ /^\s*<!--.*-->\s*$/ ? 1 : 0;
 }
 
-sub _is_html_comment_end_line ($line) {
+sub _is_html_comment_end_line ( $line ) {
   return $line =~ /-->\s*$/ ? 1 : 0;
 }
 
-sub _is_html_comment_start_line ($line) {
+sub _is_html_comment_start_line ( $line ) {
   return $line =~ /^\s*<!--/ ? 1 : 0;
+}
+
+sub _is_inline_style_start_line ( $line ) {
+  return $line =~ /^\s*<[^>]+\bstyle="\s*$/ ? 1 : 0;
+}
+
+sub _is_inline_style_end_line ( $line ) {
+  return $line =~ /">\s*$/ ? 1 : 0;
+}
+
+sub _is_inline_style_closing_only_line ( $line ) {
+  return $line =~ /^\s*">\s*$/ ? 1 : 0;
+}
+
+sub _inline_style_tag_name ( $line ) {
+  return $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*\bstyle="\s*$/
+      ? $1
+      : undef;
 }
 
 sub _is_plain_text_line ( $line ) {
@@ -171,12 +265,33 @@ sub _is_pure_void_tag_line ( $line ) {
       : 0;
 }
 
+sub _is_script_start_line ( $line ) {
+  return $line =~ /^\s*<script\b[^>]*>\s*$/i ? 1 : 0;
+}
+
+sub _is_script_end_line ( $line ) {
+  return $line =~ /^\s*<\/script>\s*$/i ? 1 : 0;
+}
+
+sub _is_style_start_line ( $line ) {
+  return $line =~ /^\s*<style\b[^>]*>\s*$/i ? 1 : 0;
+}
+
+sub _is_style_end_line ( $line ) {
+  return $line =~ /^\s*<\/style>\s*$/i ? 1 : 0;
+}
+
 sub _is_void_html_tag ( $tag ) {
   state %void = map { $_ => 1 } qw(
       area base br col embed hr img input link meta param source track wbr
   );
 
   return $void{lc $tag} ? 1 : 0;
+}
+
+sub _is_void_html_or_self_closing_tag ( $tag, $line ) {
+  return 1 if defined $line && $line =~ /\/>\s*$/;
+  return _is_void_html_tag( $tag );
 }
 
 sub _ensure_final_newline ( $self, $text ) {
@@ -189,6 +304,23 @@ sub _ensure_final_newline ( $self, $text ) {
 
 sub _line_contains_ep ( $line ) {
   return $line =~ /<%|^\s*%/ ? 1 : 0;
+}
+
+sub _strip_trailing_whitespace ( $self, $text ) {
+  $text = '' unless defined $text;
+
+  $text =~ s/[ \t]+$//mg;
+
+  return $text;
+}
+
+sub _normalize_line_endings ( $self, $text ) {
+  $text = '' unless defined $text;
+
+  $text =~ s/\r\n/\n/g;
+  $text =~ s/\r/\n/g;
+
+  return $text;
 }
 
 1;
