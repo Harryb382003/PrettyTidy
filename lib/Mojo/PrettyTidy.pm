@@ -617,4 +617,8 @@ Command-line usage error.
 
 Same terms as Perl itself.
 
+=head1 PROJECT HOME
+
+https://github.com/Harryb382003/PrettyTidy
+
 =cut

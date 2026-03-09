@@ -138,3 +138,5 @@ It may work with lower Perl versions, but that is not currently guaranteed or te
 ## License
 
 Same terms as Perl itself.
+
+Project home: https://github.com/Harryb382003/PrettyTidy
