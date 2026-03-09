@@ -315,8 +315,6 @@ subtest 'plain text navigation fallback inside EP block is indented' => sub {
       'plain fallback text follows EP indentation level';
 };
 
-############
-
 subtest 'ep wrapper keeps opening and closing html aligned' => sub {
   my $in = join "\n", "% if (\$show) {", "<div>", "</div>", "% }", "";
 
@@ -424,6 +422,70 @@ subtest 'mixed inline children align under parent' => sub {
 
   is $pt->tidy( $in ), $expected,
       'mixed inline child lines align under parent block';
+};
+
+############
+
+subtest 'closing div after script and EP block stays aligned' => sub {
+  my $in = join "\n",
+      "<div>",
+      "% if (\$show) {",
+      "<script>",
+      "function x() {",
+      "return 1;",
+      "}",
+      "</script>",
+      "% }",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      "% if (\$show) {",
+      "    <script>",
+      "    function x() {",
+      "    return 1;",
+      "    }",
+      "    </script>",
+      "% }",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'closing div after script and EP block stays aligned';
+};
+
+subtest 'nested div after script block closes cleanly' => sub {
+  my $in = join "\n",
+      "<div>",
+      "<div>",
+      "% if (\$show) {",
+      "<script>",
+      "function x() {",
+      "return 1;",
+      "}",
+      "</script>",
+      "% }",
+      "</div>",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      "  <div>",
+      "% if (\$show) {",
+      "      <script>",
+      "      function x() {",
+      "      return 1;",
+      "      }",
+      "      </script>",
+      "% }",
+      "  </div>",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'nested divs stay aligned after script and EP boundaries';
 };
 
 done_testing;
