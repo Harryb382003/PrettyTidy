@@ -116,13 +116,79 @@ subtest '--diff with --write is rejected' => sub {
       'stderr explains invalid usage';
 };
 
-subtest '--stdin reads stdin and writes stdout' => sub {
-  my $r = run_cmd( argv  => [ $^X, '-Ilib', $script, '--stdin' ],
-                   stdin => "alpha  \nbeta\t \n", );
+subtest '--output writes tidied content to a separate file' => sub {
+  my ( $in_fh,  $in_path )  = tempfile();
+  my ( $out_fh, $out_path ) = tempfile();
+  close $out_fh;
 
-  is $r->{exit},   0,               '--stdin exits 0';
-  is $r->{stdout}, "alpha\nbeta\n", '--stdin writes tidied content';
-  is $r->{stderr}, '',              'stderr is empty';
+  print {$in_fh} "alpha  \nbeta\t \n";
+  close $in_fh;
+
+  my $r = run_cmd(
+          argv => [ $^X, '-Ilib', $script, '--output', $out_path, $in_path ], );
+
+  is $r->{exit},         0,                    '--output exits 0';
+  is $r->{stdout},       '',                   'stdout is empty';
+  is $r->{stderr},       '',                   'stderr is empty';
+  is slurp( $in_path ),  "alpha  \nbeta\t \n", 'input file was not modified';
+  is slurp( $out_path ), "alpha\nbeta\n", 'output file received tidied content';
+};
+
+subtest '--output with --check is rejected' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha\n";
+  close $fh;
+
+  my $r = run_cmd(
+     argv => [ $^X, '-Ilib', $script, '--check', '--output', 'out.txt', $path ],
+  );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output cannot be combined with --check/,
+      'stderr explains invalid usage';
+};
+
+subtest '--output with --diff is rejected' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha\n";
+  close $fh;
+
+  my $r = run_cmd(
+      argv => [ $^X, '-Ilib', $script, '--diff', '--output', 'out.txt', $path ],
+  );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output cannot be combined with --diff/,
+      'stderr explains invalid usage';
+};
+
+subtest '--output with --write is rejected' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha  \n";
+  close $fh;
+
+  my $r = run_cmd(
+     argv => [ $^X, '-Ilib', $script, '--write', '--output', 'out.txt', $path ],
+  );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output cannot be combined with --write/,
+      'stderr explains invalid usage';
+};
+
+subtest '--stdin with --output writes tidied content to a file' => sub {
+  my ( $fh, $out_path ) = tempfile();
+  close $fh;
+
+  my $r = run_cmd(
+           argv  => [ $^X, '-Ilib', $script, '--stdin', '--output', $out_path ],
+           stdin => "alpha  \nbeta\t \n", );
+
+  is $r->{exit},   0,  '--stdin with --output exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  is slurp( $out_path ), "alpha\nbeta\n",
+      'output file received tidied stdin content';
 };
 
 subtest '--write rewrites the file in place' => sub {
@@ -190,53 +256,6 @@ subtest '--version prints version and exits 0' => sub {
         qr/^mojo-prettytidy \Q$Mojo::PrettyTidy::VERSION\E\n\z/,
         '--version prints script version', );
   is $r->{stderr}, '', 'stderr is empty';
-};
-
-subtest '--output writes tidied content to a separate file' => sub {
-  my ( $in_fh,  $in_path )  = tempfile();
-  my ( $out_fh, $out_path ) = tempfile();
-  close $out_fh;
-
-  print {$in_fh} "alpha  \nbeta\t \n";
-  close $in_fh;
-
-  my $r = run_cmd(
-          argv => [ $^X, '-Ilib', $script, '--output', $out_path, $in_path ], );
-
-  is $r->{exit},         0,                    '--output exits 0';
-  is $r->{stdout},       '',                   'stdout is empty';
-  is $r->{stderr},       '',                   'stderr is empty';
-  is slurp( $in_path ),  "alpha  \nbeta\t \n", 'input file was not modified';
-  is slurp( $out_path ), "alpha\nbeta\n", 'output file received tidied content';
-};
-
-subtest '--output with --write is rejected' => sub {
-  my ( $fh, $path ) = tempfile();
-  print {$fh} "alpha  \n";
-  close $fh;
-
-  my $r = run_cmd(
-     argv => [ $^X, '-Ilib', $script, '--write', '--output', 'out.txt', $path ],
-  );
-
-  isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--output cannot be combined with --write/,
-      'stderr explains invalid usage';
-};
-
-subtest '--stdin with --output writes tidied content to a file' => sub {
-  my ( $fh, $out_path ) = tempfile();
-  close $fh;
-
-  my $r = run_cmd(
-           argv  => [ $^X, '-Ilib', $script, '--stdin', '--output', $out_path ],
-           stdin => "alpha  \nbeta\t \n", );
-
-  is $r->{exit},   0,  '--stdin with --output exits 0';
-  is $r->{stdout}, '', 'stdout is empty';
-  is $r->{stderr}, '', 'stderr is empty';
-  is slurp( $out_path ), "alpha\nbeta\n",
-      'output file received tidied stdin content';
 };
 
 done_testing;

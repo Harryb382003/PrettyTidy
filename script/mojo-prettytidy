@@ -155,6 +155,7 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
         mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
+        mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --write file.html.ep
     mojo-prettytidy --write --backup file.html.ep
     mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
