@@ -8,13 +8,14 @@ use Mojo::PrettyTidy;
 
 my $pt = Mojo::PrettyTidy->new( indent_width => 2 );
 
-subtest 'attribute-level EP line is left alone' => sub {
+subtest 'attribute-level EP line keeps structure but inherits outer indent' =>
+    sub {
   my $in = "<div>\n<a href=\"<%= \$url %>\">Link</a>\n</div>\n";
 
-  my $expected = "<div>\n<a href=\"<%= \$url %>\">Link</a>\n</div>\n";
+  my $expected = "<div>\n  <a href=\"<%= \$url %>\">Link</a>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'attribute-level EP line is not reindented';
-};
+    };
 
 subtest 'doctype line is kept at current level' => sub {
   my $in = "<!DOCTYPE html>\n<div>\n<p>\nHello\n</p>\n</div>\n";
@@ -46,7 +47,7 @@ subtest 'html comment near EP lines is left safe' => sub {
 subtest 'inline EP in html line is left alone' => sub {
   my $in = "<div>\n<div><%= \$name %></div>\n</div>\n";
 
-  my $expected = "<div>\n<div><%= \$name %></div>\n</div>\n";
+  my $expected = "<div>\n  <div><%= \$name %></div>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'inline EP line is not reindented';
 };
@@ -150,9 +151,9 @@ subtest 'paginate per-page block keeps html structure near EP lines' => sub {
       "  <label>",
       "    Per page:",
       "    <select>",
-      "% for my \$n (20, 50) {",
-      "        <option>n</option>",
-      "% }",
+      "    % for my \$n (20, 50) {",
+      "      <option>n</option>",
+      "    % }",
       "    </select>",
       "  </label>",
       "  <input>",
@@ -343,13 +344,13 @@ subtest 'ep wrapper with inner branch keeps plain text and links aligned' =>
   my $expected = join "\n",
       "% if (\$pages > 1) {",
       "  <div>",
-      "% if (\$page > 1) {",
-      "      <a>First</a>",
+      "  % if (\$page > 1) {",
+      "    <a>First</a>",
       "    |",
-      "      <a>Prev</a>",
-      "% } else {",
+      "    <a>Prev</a>",
+      "  % } else {",
       "    First | Prev",
-      "% }",
+      "  % }",
       "  </div>",
       "% }",
       "";
@@ -374,26 +375,14 @@ subtest 'td action block stays aligned across EP branch' => sub {
 
   my $expected = join "\n",
       "<td>",
-      "% if (stash('dev_mode')) {",
+      "  % if (stash('dev_mode')) {",
       "    <div>",
       "      <form>",
       "      </form>",
       "    </div>",
-      "% } else {",
+      "  % } else {",
       "    <em>dev</em>",
-      "% }",
-      "</td>",
-      "";
-  my $expected = join "\n",
-      "<td>",
-      "% if (stash('dev_mode')) {",
-      "    <div>",
-      "      <form>",
-      "      </form>",
-      "    </div>",
-      "% } else {",
-      "    <em>dev</em>",
-      "% }",
+      "  % }",
       "</td>",
       "";
 
@@ -424,8 +413,6 @@ subtest 'mixed inline children align under parent' => sub {
       'mixed inline child lines align under parent block';
 };
 
-############
-
 subtest 'closing div after script and EP block stays aligned' => sub {
   my $in = join "\n",
       "<div>",
@@ -441,13 +428,13 @@ subtest 'closing div after script and EP block stays aligned' => sub {
 
   my $expected = join "\n",
       "<div>",
-      "% if (\$show) {",
+      "  % if (\$show) {",
       "    <script>",
       "    function x() {",
       "    return 1;",
       "    }",
       "    </script>",
-      "% }",
+      "  % }",
       "</div>",
       "";
 
@@ -473,19 +460,125 @@ subtest 'nested div after script block closes cleanly' => sub {
   my $expected = join "\n",
       "<div>",
       "  <div>",
-      "% if (\$show) {",
+      "    % if (\$show) {",
       "      <script>",
       "      function x() {",
       "      return 1;",
       "      }",
       "      </script>",
-      "% }",
+      "    % }",
       "  </div>",
       "</div>",
       "";
 
   is $pt->tidy( $in ), $expected,
       'nested divs stay aligned after script and EP boundaries';
+};
+
+############
+
+subtest 'for-loop row block uses local readable indentation' => sub {
+  my $in = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "<tr>",
+      "<td><%= \$t->{name} %></td>",
+      "<td><code><%= \$t->{ih} %></code></td>",
+      "<td>",
+      "% if (stash('dev_mode')) {",
+      "<div class=\"qbtl-actions\">",
+      "<form method=\"post\" action=\"/qbt/add_one\">",
+      "<input type=\"hidden\" name=\"ih\" value=\"<%= \$t->{ih} %>\">",
+      "<button type=\"submit\">Add</button>",
+      "</form>",
+      "</div>",
+      "% } else {",
+      "<em>dev</em>",
+      "% }",
+      "</td>",
+      "</tr>",
+      "% }",
+      "";
+
+  my $expected = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "  <tr>",
+      "    <td><%= \$t->{name} %></td>",
+      "    <td><code><%= \$t->{ih} %></code></td>",
+      "    <td>",
+      "    % if (stash('dev_mode')) {",
+      "      <div class=\"qbtl-actions\">",
+      "        <form method=\"post\" action=\"/qbt/add_one\">",
+"          <input type=\"hidden\" name=\"ih\" value=\"<%= \$t->{ih} %>\">",
+      "          <button type=\"submit\">Add</button>",
+      "        </form>",
+      "      </div>",
+      "    % } else {",
+      "      <em>dev</em>",
+      "    % }",
+      "    </td>",
+      "  </tr>",
+      "% }",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'html inside for-loop stays readable without excessive rightward drift';
+};
+
+subtest 'for-loop td lines align under tr' => sub {
+  my $in = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "<tr>",
+      "<td><%= \$t->{name} %></td>",
+      "<td><code><%= \$t->{ih} %></code></td>",
+      "</tr>",
+      "% }",
+      "";
+
+  my $expected = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "  <tr>",
+      "    <td><%= \$t->{name} %></td>",
+      "    <td><code><%= \$t->{ih} %></code></td>",
+      "  </tr>",
+      "% }",
+      "";
+
+  is $pt->tidy( $in ), $expected, 'td lines align under tr inside for-loop';
+};
+
+subtest 'nested EP control lines indent locally' => sub {
+  my $in = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "<tr>",
+      "<td>",
+      "% if (stash('dev_mode')) {",
+      "<div>",
+      "<form>",
+      "</form>",
+      "</div>",
+      "% }",
+      "</td>",
+      "</tr>",
+      "% }",
+      "";
+
+  my $expected = join "\n",
+      "% for my \$t (\@\$sample) {",
+      "  <tr>",
+      "    <td>",
+      "    % if (stash('dev_mode')) {",
+      "      <div>",
+      "        <form>",
+      "        </form>",
+      "      </div>",
+      "    % }",
+      "    </td>",
+      "  </tr>",
+      "% }",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'nested EP control lines inherit local indentation';
 };
 
 done_testing;

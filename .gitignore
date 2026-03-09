@@ -6,3 +6,4 @@ MANIFEST.SKIP
 share/samples/parsed.sample_1_stripped.html.ep
 share/samples/sample_1_stripped.html.ep
 .mojo_prettytidy_cpan_quality_notes.txt
+parsed.sample_1_stripped.html.ep

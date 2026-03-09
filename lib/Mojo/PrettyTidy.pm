@@ -77,27 +77,43 @@ sub _apply_basic_indentation ( $self, $text ) {
       next;
     }
 
+    if ( _is_html_line_with_ep( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
+      next;
+    }
+
     if ( _line_contains_ep( $line ) ) {
       $ep_level-- if _ep_closes_before( $line ) && $ep_level > 0;
-      push @out, $line;
+
+      if ( _is_ep_control_line( $line ) ) {
+        push @out, ( $step x $level ) . $trimmed;
+      }
+      else {
+        push @out, $line;
+      }
+
       $ep_level++ if _ep_opens_after( $line );
       next;
     }
 
     if ( $in_comment_block ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_comment_block = 0 if _is_html_comment_end_line( $trimmed );
       next;
     }
 
     if ( $in_script_block ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_script_block = 0 if _is_script_end_line( $trimmed );
       next;
     }
 
     if ( $in_style_block ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_style_block = 0 if _is_style_end_line( $trimmed );
       next;
     }
@@ -119,52 +135,61 @@ sub _apply_basic_indentation ( $self, $text ) {
     }
 
     if ( _is_html_comment_start_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_comment_block = 1 unless _is_html_comment_line( $trimmed );
       next;
     }
 
     if ( _is_script_start_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_script_block = 1 unless _is_script_end_line( $trimmed );
       next;
     }
 
     if ( _is_style_start_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_style_block = 1 unless _is_style_end_line( $trimmed );
       next;
     }
 
     if ( _is_doctype_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       next;
     }
 
     if ( _is_html_comment_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       next;
     }
 
     if ( _is_mixed_inline_html_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       next;
     }
 
     if ( _is_pure_closing_tag_line( $trimmed ) ) {
       $level-- if $level > 0;
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       next;
     }
 
     if ( _is_pure_opening_tag_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $level++;
       next;
     }
 
     if ( _is_pure_void_tag_line( $trimmed ) ) {
-      push @out, ( $step x ( $level + $ep_level ) ) . $trimmed;
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       next;
     }
 
@@ -190,6 +215,20 @@ sub _apply_basic_indentation ( $self, $text ) {
 sub _ep_closes_before ( $line ) {
   return 0 unless defined $line;
   return $line =~ /^\s*%\s*}/ ? 1 : 0;
+}
+
+sub _is_ep_control_line ( $line ) {
+  return 0 unless defined $line;
+  return 0 unless $line =~ /^\s*%/;
+
+  return 1 if $line =~ /^\s*%\s*}/;
+  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
+
+  return 0;
+}
+
+sub _effective_ep_indent ( $ep_level ) {
+  return $ep_level > 0 ? 1 : 0;
 }
 
 sub _ep_opens_after ( $line ) {
@@ -243,6 +282,14 @@ sub _is_html_comment_end_line ( $line ) {
 
 sub _is_html_comment_start_line ( $line ) {
   return $line =~ /^\s*<!--/ ? 1 : 0;
+}
+
+sub _is_html_line_with_ep ( $line ) {
+  return 0 if !defined $line || $line eq '';
+  return 0 unless $line =~ /^\s*</;
+  return 0 if $line     =~ /^\s*<%[=%#]?/; # leading EP tag line stays untouched
+  return 0 unless _line_contains_ep( $line );
+  return 1;
 }
 
 sub _is_inline_style_start_line ( $line ) {
