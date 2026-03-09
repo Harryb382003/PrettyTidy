@@ -59,7 +59,6 @@ sub _slurp ( $path ) {
 1;
 
 __END__
-
 =pod
 
 =head1 NAME
@@ -81,8 +80,8 @@ This module provides a small core-only helper for running a subprocess
 in tests while capturing standard input, standard output, standard
 error, and exit status.
 
-It uses temporary files and a fork/exec model to keep the capture
-behavior simple and predictable.
+It uses temporary files and a fork/exec model to keep capture behavior
+simple and predictable.
 
 =head1 FUNCTIONS
 
@@ -93,15 +92,21 @@ behavior simple and predictable.
       stdin => $input,
     );
 
-Returns a hash reference containing:
+Return a hash reference containing:
 
 =over 4
 
 =item * C<stdout>
 
+Captured standard output.
+
 =item * C<stderr>
 
+Captured standard error.
+
 =item * C<exit>
+
+Process exit status.
 
 =back
 

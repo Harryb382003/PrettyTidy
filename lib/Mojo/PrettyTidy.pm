@@ -474,88 +474,144 @@ sub _strip_trailing_whitespace ( $self, $text ) {
 1;
 
 __END__
+
 =pod
 
 =head1 NAME
 
-Mojo::PrettyTidy - Conservative tidy tool for Mojolicious .html.ep templates
+mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 
 =head1 SYNOPSIS
 
-    use Mojo::PrettyTidy;
-
-    my $pt = Mojo::PrettyTidy->new(
-      indent_width => 2,
-      tab_width    => 2,
-    );
-
-    my $output = $pt->tidy($input);
-
-    if ( !$pt->check($input) ) {
-      print "changes would be made\n";
-    }
+    mojo-prettytidy file.html.ep
+    mojo-prettytidy --output parsed.file.html.ep file.html.ep
+    mojo-prettytidy --check file.html.ep
+    mojo-prettytidy --diff file.html.ep
+    mojo-prettytidy --write file.html.ep
+    mojo-prettytidy --write --backup file.html.ep
+    mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
+    mojo-prettytidy --stdin < file.html.ep
+    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
+    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
+    mojo-prettytidy templates --prefix pt. --outdir parsed
+    mojo-prettytidy --version
 
 =head1 DESCRIPTION
 
-C<Mojo::PrettyTidy> is a conservative tidy tool for Mojolicious
-Embedded Perl template files, especially C<.html.ep> files.
+C<mojo-prettytidy> provides command-line access to L<Mojo::PrettyTidy>.
 
-The initial focus is safe normalization and conservative indentation
-rather than aggressive formatting. Early versions aim to preserve
-template semantics while performing low-risk cleanup.
+The command is intended to be editor-friendly and suitable for use
+from tools such as Kate in a manner similar to C<perltidy>.
 
-=head1 METHODS
+By default, the formatted result is written to standard output.
 
-=head2 new
+=head1 OPTIONS
 
-    my $pt = Mojo::PrettyTidy->new(%args);
+=head2 --write, -w
 
-Constructs a new formatter object.
+Rewrite the input file in place.
 
-=head2 tidy
+=head2 --backup
 
-    my $output = $pt->tidy($input);
+When used with C<--write>, create a backup of the original file before
+rewriting it.
 
-Returns a conservatively tidied version of the input text.
+=head2 --backup-ext
 
-Current behavior includes:
+When used with C<--write --backup>, choose the backup suffix.
+The default is C<.bak>.
+
+=head2 --check, -c
+
+Exit with status C<0> if the input file is already tidy, or C<1> if
+changes would be made.
+
+This option requires a single input file.
+
+=head2 --diff
+
+Print a minimal unified-style diff showing what would change, and exit
+with status C<0> if no changes are needed or C<1> if differences are
+found.
+
+This option requires a single input file.
+
+=head2 --output, -o
+
+Write the tidied result to the specified output file instead of standard
+output.
+
+This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
+It is intended for single-input use.
+
+=head2 --prefix, --pre
+
+When writing multiple outputs, prefix generated filenames with the
+specified string.
+
+=head2 --outdir
+
+When writing multiple outputs, place generated files in the specified
+directory.
+
+=head2 --stdin
+
+Read input from standard input and write formatted output to standard
+output.
+
+=head2 --version, -v
+
+Print the program version and exit.
+
+=head2 --help, -h
+
+Show brief help.
+
+=head2 --man
+
+Show full documentation.
+
+=head1 DIRECTORY INPUT
+
+When a positional input is a directory, C<mojo-prettytidy> scans it
+non-recursively and processes matching C<.html.ep> files.
+
+When multiple input files are processed, use one of:
 
 =over 4
 
-=item * normalize line endings to LF
+=item * C<--write>
 
-=item * remove trailing horizontal whitespace
+Rewrite each file in place.
 
-=item * ensure exactly one trailing newline at end of file
+=item * C<--prefix>
 
-=item * apply conservative indentation to obvious HTML-only lines
+Write sibling output files with prefixed names.
 
-=item * indent plain text lines inside safe HTML structure
+=item * C<--outdir>
 
-=item * preserve lines containing Embedded Perl markers
-
-=item * handle single-line and multiline HTML comments conservatively
-
-=item * treat C<script> and C<style> blocks as protected regions
-
-=item * handle multiline inline C<style="..."> attributes conservatively
+Write generated files to the specified output directory.
 
 =back
 
-=head2 check
+=head1 EXIT STATUS
 
-    my $ok = $pt->check($input);
+=over 4
 
-Returns true if C<tidy> would leave the input unchanged.
+=item * C<0>
 
-=head1 DESIGN GOALS
+Success, or no changes needed in C<--check> or C<--diff> mode.
 
-This module is intended to be safe to invoke from editors and command
-line tools in a style similar to C<perltidy>.
+=item * C<1>
 
-=head1 AUTHOR
+Changes would be made in C<--check> mode, or differences were found in
+C<--diff> mode.
 
-Harry Bennett
+=item * C<2>
+
+Command-line usage error.
+
+=back
 
 =head1 LICENSE
 

@@ -236,53 +236,92 @@ __END__
 
 =head1 NAME
 
-Mojo::PrettyTidy::Diff - Minimal unified diff support for Mojo::PrettyTidy
+Mojo::PrettyTidy - Conservative tidy tool for Mojolicious .html.ep templates
 
 =head1 SYNOPSIS
 
-    use Mojo::PrettyTidy::Diff qw(unified_diff);
+    use Mojo::PrettyTidy;
 
-    my $diff = unified_diff(
-      old       => $before,
-      new       => $after,
-      old_label => 'file.html.ep (original)',
-      new_label => 'file.html.ep (tidied)',
-      context   => 3,
+    my $pt = Mojo::PrettyTidy->new(
+      indent_width => 2,
+      tab_width    => 2,
     );
+
+    my $output = $pt->tidy($input);
+
+    if ( !$pt->check($input) ) {
+      print "changes would be made\n";
+    }
 
 =head1 DESCRIPTION
 
-This module provides a small pure-Perl line-based diff suitable for
-showing what C<Mojo::PrettyTidy> would change.
+C<Mojo::PrettyTidy> is a conservative tidy tool for Mojolicious
+Embedded Perl template files, especially C<.html.ep> files.
 
-It is intentionally minimal and is not intended to be a full general
-purpose replacement for system C<diff>.
+The initial focus is safe normalization and conservative indentation
+rather than aggressive formatting. Early versions aim to preserve
+template semantics while performing low-risk cleanup.
 
-=head1 FUNCTIONS
+=head1 METHODS
 
-=head2 unified_diff
+=head2 new
 
-Returns an empty string if the inputs are identical. Otherwise returns
-a minimal unified-style diff as a string.
+    my $pt = Mojo::PrettyTidy->new(%args);
 
-Recognized arguments include:
+Construct a new formatter object.
+
+=head2 tidy
+
+    my $output = $pt->tidy($input);
+
+Return a conservatively tidied version of the input text.
+
+Current behavior includes:
 
 =over 4
 
-=item * C<old>
+=item * normalize line endings to LF
 
-=item * C<new>
+=item * remove trailing horizontal whitespace
 
-=item * C<old_label>
+=item * ensure exactly one trailing newline at end of file
 
-=item * C<new_label>
+=item * apply conservative indentation to safe HTML structure
 
-=item * C<context>
+=item * indent plain text lines inside safe HTML structure
 
-Number of unchanged context lines to include around each changed hunk.
-Defaults to C<3>.
+=item * preserve Embedded Perl structure conservatively
+
+=item * indent HTML lines containing Embedded Perl markers conservatively
+
+=item * indent Embedded Perl control lines locally inside surrounding HTML blocks
+
+=item * indent embedded percent-code lines locally inside surrounding HTML blocks
+
+=item * handle single-line and multiline HTML comments conservatively
+
+=item * treat C<script> and C<style> blocks as protected regions
+
+=item * handle multiline opening tags conservatively
+
+=item * handle multiline inline C<style="..."> attributes conservatively
 
 =back
+
+=head2 check
+
+    my $ok = $pt->check($input);
+
+Return true if C<tidy> would leave the input unchanged.
+
+=head1 DESIGN GOALS
+
+This module is intended to be safe to invoke from editors and
+command-line tools in a style similar to C<perltidy>.
+
+=head1 AUTHOR
+
+Harry Bennett
 
 =head1 LICENSE
 
