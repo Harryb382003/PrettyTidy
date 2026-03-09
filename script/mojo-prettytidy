@@ -131,11 +131,11 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
-    mojo-prettytidy --write file.html.ep
-    mojo-prettytidy --write --backup file.html.ep
-    mojo-prettytidy --write --backup-ext=.orig file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
+    mojo-prettytidy --write file.html.ep
+    mojo-prettytidy --write --backup file.html.ep
+    mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
     mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --version
 

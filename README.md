@@ -1,8 +1,9 @@
 # Mojo-PrettyTidy
 
-Mojo::PrettyTidy is a conservative tidy tool for Mojolicious Embedded Perl templates, especially .html.ep.
+Mojo::PrettyTidy is a conservative tidy tool for Mojolicious Embedded Perl templates, especially .html.ep files.
 
-The initial focus is safe normalization and conservative indentation rather than aggressive formatting. Early versions aim to preserve template semantics while performing low-risk cleanup.
+The initial focus is safe normalization and conservative indentation rather than aggressive formatting. Early versions 
+aim to preserve template semantics while performing low-risk cleanup.
 
 ## Status
 
@@ -33,15 +34,23 @@ make test
 make install
 
 ## Command-line usage
+Replace file.html.ep with your template file.
 
 mojo-prettytidy file.html.ep
+mojo-prettytidy --check file.html.ep
 mojo-prettytidy --diff file.html.ep
 mojo-prettytidy --write file.html.ep
 mojo-prettytidy --write --backup file.html.ep
-mojo-prettytidy --write --backup-ext=.orig --backup file.html.ep
-mojo-prettytidy --check file.html.ep
+mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
 mojo-prettytidy --stdin < file.html.ep
 mojo-prettytidy --version
+
+Notes:
+
+--backup requires --write.
+--backup-ext is used with --write --backup.
+Use --diff to review what would change before rewriting a file.
+When rewriting files in place, use --backup to preserve the original first.
 
 ## Kate / editor usage
 
@@ -57,16 +66,19 @@ script/mojo-prettytidy --stdin
 
 ## Current behavior
 
-Current versions perform conservative cleanup:
-
-When rewriting files in place, use --backup to preserve the original first.
-
-Use --diff to review what would change before rewriting a file.
+Current versions perform conservative cleanup and formatting:
 
 - normalize line endings to LF
 - remove trailing horizontal whitespace
 - ensure a final newline
-- apply a narrow indentation pass to obvious HTML-only lines
+- apply conservative indentation to obvious HTML-only lines
+- indent plain text lines inside safe HTML structure
+- preserve lines containing Embedded Perl markers
+- handle single-line and multiline HTML comments conservatively
+- treat script and style blocks as protected regions
+- handle multiline inline style="..." attributes conservatively
+- provide --diff for review before rewriting files
+- provide --backup and --backup-ext for safer in-place writes
 
 ## Perl version
 
@@ -77,4 +89,3 @@ It may work with lower Perl versions, but that is not currently guaranteed or te
 ## License
 
 Same terms as Perl itself.
-

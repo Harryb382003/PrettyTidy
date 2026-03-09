@@ -326,7 +326,6 @@ sub _normalize_line_endings ( $self, $text ) {
 1;
 
 __END__
-
 =pod
 
 =head1 NAME
@@ -351,11 +350,11 @@ Mojo::PrettyTidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 DESCRIPTION
 
 C<Mojo::PrettyTidy> is a conservative tidy tool for Mojolicious
-Embedded Perl template files, especially C<.html.ep>.
+Embedded Perl template files, especially C<.html.ep> files.
 
-The initial focus is safe normalization and indentation rather than
-aggressive formatting. Early versions aim to preserve template
-semantics while performing low-risk cleanup.
+The initial focus is safe normalization and conservative indentation
+rather than aggressive formatting. Early versions aim to preserve
+template semantics while performing low-risk cleanup.
 
 =head1 METHODS
 
@@ -379,9 +378,19 @@ Current behavior includes:
 
 =item * remove trailing horizontal whitespace
 
-=item * apply a narrow indentation pass to obvious HTML-only lines
-
 =item * ensure exactly one trailing newline at end of file
+
+=item * apply conservative indentation to obvious HTML-only lines
+
+=item * indent plain text lines inside safe HTML structure
+
+=item * preserve lines containing Embedded Perl markers
+
+=item * handle single-line and multiline HTML comments conservatively
+
+=item * treat C<script> and C<style> blocks as protected regions
+
+=item * handle multiline inline C<style="..."> attributes conservatively
 
 =back
 

@@ -4,7 +4,12 @@ Revision history for Mojo-PrettyTidy
       - Initial development release
       - Added conservative normalization
       - Added narrow indentation pass for obvious HTML-only lines
-      - Added CLI with --write, --check, --stdin, and --version
-      - Added sample-driven and CLI tests
+      - Added plain text indentation inside safe HTML structure
+      - Preserved lines containing Embedded Perl markers
+      - Added conservative handling for single-line and multiline HTML comments
+      - Added protected handling for script and style blocks
+      - Added conservative handling for multiline inline style="..." attributes
+      - Added CLI with --write, --check, --stdin, --diff, and --version
       - Added --backup and --backup-ext support for safer in-place writes
-      - Added pure-Perl --diff support with minimal unified-style output
+      - Added pure-Perl diff support with minimal unified-style output
+      - Added sample-driven, diff, indentation, and CLI tests
