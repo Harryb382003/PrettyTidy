@@ -13,3 +13,4 @@ Revision history for Mojo-PrettyTidy
       - Added --backup and --backup-ext support for safer in-place writes
       - Added pure-Perl diff support with minimal unified-style output
       - Added sample-driven, diff, indentation, and CLI tests
+      - Added --output support for writing tidied content to a separate file
