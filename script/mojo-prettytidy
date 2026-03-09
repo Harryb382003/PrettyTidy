@@ -6,11 +6,12 @@ use feature 'signatures';
 
 use Getopt::Long qw(GetOptions);
 use File::Copy   qw(copy);
+use File::Spec;
+use Pod::Usage qw(pod2usage);
 
 use lib 'lib';
 use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
-use Pod::Usage             qw(pod2usage);
 
 my $write       = 0;
 my $check       = 0;
@@ -21,6 +22,8 @@ my $stdin       = 0;
 my $version     = 0;
 my $backup      = 0;
 my $diff        = 0;
+my $prefix      = '';
+my $outdir      = '';
 my $backup_ext  = '.bak';
 
 GetOptions(
@@ -28,12 +31,14 @@ GetOptions(
             'output|o=s'   => \$output_path,
             'check|c'      => \$check,
             'stdin'        => \$stdin,
-            'version|V'    => \$version,
+            'version|v'    => \$version,
             'backup'       => \$backup,
             'backup-ext=s' => \$backup_ext,
             'diff'         => \$diff,
             'help|h'       => \$help,
             'man'          => \$man,
+            'prefix|pre=s' => \$prefix,
+            'outdir=s'     => \$outdir,
 ) or pod2usage( 2 );
 
 pod2usage( 1 )             if $help;
@@ -44,22 +49,49 @@ if ( $version ) {
   exit 0;
 }
 
-pod2usage( "--backup requires --write\n" ) if $backup && !$write;
+my @inputs = @ARGV;
+
+pod2usage( "--backup requires --write\n" )
+    if $backup && !$write;
+
 pod2usage( "--backup-ext requires --write\n" )
     if defined( $backup_ext ) && $backup_ext ne '.bak' && !$write;
-pod2usage( "--stdin cannot be combined with --write\n" )  if $stdin && $write;
-pod2usage( "--stdin cannot be combined with --backup\n" ) if $stdin && $backup;
-pod2usage( "--diff cannot be combined with --write\n" )   if $diff  && $write;
-pod2usage( "--diff cannot be combined with --stdin\n" )   if $diff  && $stdin;
 
-pod2usage( "--output cannot be combined with --write\n" )
-    if $output_path && $write;
+pod2usage( "--check requires a single input file\n" )
+    if $check && _has_directory_input( @inputs );
+
+pod2usage( "--diff requires a single input file\n" )
+    if $diff && _has_directory_input( @inputs );
+
+pod2usage( "--diff cannot be combined with --write\n" )
+    if $diff && $write;
+
+pod2usage( "--diff cannot be combined with --stdin\n" )
+    if $diff && $stdin;
 
 pod2usage( "--output cannot be combined with --check\n" )
     if $output_path && $check;
 
 pod2usage( "--output cannot be combined with --diff\n" )
     if $output_path && $diff;
+
+pod2usage( "--output cannot be combined with --write\n" )
+    if $output_path && $write;
+
+pod2usage( "--write cannot be combined with --prefix\n" )
+    if $write && length $prefix;
+
+pod2usage( "--write cannot be combined with --outdir\n" )
+    if $write && length $outdir;
+
+pod2usage( "--stdin cannot be combined with --write\n" )
+    if $stdin && $write;
+
+pod2usage( "--stdin cannot be combined with --backup\n" )
+    if $stdin && $backup;
+
+pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
+    if $stdin && @inputs;
 
 my $pt = Mojo::PrettyTidy->new;
 
@@ -80,51 +112,148 @@ if ( $stdin ) {
   exit 0;
 }
 
-my $file = shift @ARGV;
+pod2usage( "No input file provided\n" ) unless @inputs;
 
-pod2usage( "No input file provided\n" ) unless defined $file;
-pod2usage( "Too many arguments\n" ) if @ARGV;
+pod2usage( "--output cannot be combined with multiple inputs\n" )
+    if $output_path && @inputs > 1;
 
-my $input  = _slurp( $file );
-my $output = $pt->tidy( $input );
+my @files = _collect_input_files( @inputs );
 
-if ( $check ) {
-  exit( $output eq $input ? 0 : 1 );
-}
+pod2usage( "No input files found\n" ) unless @files;
 
-if ( $diff ) {
-  my $diff_text = unified_diff(
-                                old       => $input,
-                                new       => $output,
-                                old_label => "$file (original)",
-                                new_label => "$file (tidied)", );
+pod2usage( "--check requires a single input file\n" )
+    if $check && @files != 1;
 
-  if ( length $diff_text ) {
-    print $diff_text;
-    exit 1;
+pod2usage( "--diff requires a single input file\n" )
+    if $diff && @files != 1;
+
+pod2usage( "multiple inputs require --write, --prefix, or --outdir\n" )
+    if @files > 1 && !$write && !length( $prefix ) && !length( $outdir );
+
+_ensure_outdir( $outdir ) if length $outdir;
+
+# preserve old single-file behavior when no multi-output mode is requested
+if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
+  my $file   = $files[0];
+  my $input  = _slurp( $file );
+  my $output = $pt->tidy( $input );
+
+  if ( $check ) {
+    exit( $output eq $input ? 0 : 1 );
   }
 
-  exit 0;
-}
+  if ( $diff ) {
+    my $diff_text = unified_diff(
+                                  old       => $input,
+                                  new       => $output,
+                                  old_label => "$file (original)",
+                                  new_label => "$file (tidied)", );
 
-if ( $output_path ) {
-  _spew( $output_path, $output );
-  exit 0;
-}
+    if ( length $diff_text ) {
+      print $diff_text;
+      exit 1;
+    }
 
-if ( $write ) {
-  if ( $backup ) {
-    my $backup_path = $file . $backup_ext;
-    copy( $file, $backup_path )
-        or die "Cannot create backup '$backup_path' from '$file': $!";
+    exit 0;
   }
 
-  _spew( $file, $output );
+  if ( $output_path ) {
+    _spew( $output_path, $output );
+    exit 0;
+  }
+
+  if ( $write ) {
+    if ( $backup ) {
+      my $backup_path = $file . $backup_ext;
+      copy( $file, $backup_path )
+          or die "Cannot create backup '$backup_path' from '$file': $!";
+    }
+
+    _spew( $file, $output );
+    exit 0;
+  }
+
+  print $output;
   exit 0;
 }
 
-print $output;
+# multi-file / directory mode
+for my $file ( @files ) {
+  my $input  = _slurp( $file );
+  my $output = $pt->tidy( $input );
+
+  if ( $write ) {
+    if ( $backup ) {
+      my $backup_path = $file . $backup_ext;
+      copy( $file, $backup_path )
+          or die "Cannot create backup '$backup_path' from '$file': $!";
+    }
+
+    _spew( $file, $output );
+    next;
+  }
+
+  my $dest = _output_path_for( $file, $prefix, $outdir );
+  _spew( $dest, $output );
+}
+
 exit 0;
+
+sub _collect_input_files ( @inputs ) {
+  my @files;
+
+  for my $path ( @inputs ) {
+    if ( -f $path ) {
+      push @files, $path;
+      next;
+    }
+
+    if ( -d $path ) {
+      opendir my $dh, $path or die "Cannot open directory '$path': $!";
+      my @children = sort grep { !/^\.\.?$/ } readdir $dh;
+      closedir $dh;
+
+      for my $name ( @children ) {
+        my $child = File::Spec->catfile( $path, $name );
+        next unless -f $child;
+        next unless _is_template_file( $child );
+        push @files, $child;
+      }
+
+      next;
+    }
+
+    die "Input path not found or unsupported: $path\n";
+  }
+
+  return @files;
+}
+
+sub _is_template_file ( $path ) {
+  return $path =~ /\.html\.ep\z/ ? 1 : 0;
+}
+
+sub _ensure_outdir ( $dir ) {
+  return unless length $dir;
+  return if -d $dir;
+  mkdir $dir or die "Cannot create output directory '$dir': $!";
+}
+
+sub _has_directory_input ( @inputs ) {
+  for my $path ( @inputs ) {
+    return 1 if -d $path;
+  }
+  return 0;
+}
+
+sub _output_path_for ( $input, $prefix, $outdir ) {
+  my ( $vol, $dir, $file ) = File::Spec->splitpath( $input );
+  my $name = ( length $prefix ? $prefix : '' ) . $file;
+
+  return length $outdir
+      ? File::Spec->catfile( $outdir, $name )
+      : File::Spec->catfile( $dir,    $name );
+}
 
 sub _slurp ( $path ) {
   open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
@@ -152,14 +281,16 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
-        mojo-prettytidy --output parsed.file.html.ep file.html.ep
+    mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
-        mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --write file.html.ep
     mojo-prettytidy --write --backup file.html.ep
     mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
     mojo-prettytidy --stdin < file.html.ep
+    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
+    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
+    mojo-prettytidy templates --prefix pt. --outdir parsed
     mojo-prettytidy --version
 
 =head1 DESCRIPTION
@@ -205,12 +336,22 @@ output.
 
 This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
 
+=head2 --prefix, --pre
+
+When writing multiple outputs, prefix generated filenames with the
+specified string.
+
+=head2 --outdir
+
+When writing multiple outputs, place generated files in the specified
+directory.
+
 =head2 --stdin
 
 Read input from standard input and write formatted output to standard
 output.
 
-=head2 --version, -V
+=head2 --version, -v
 
 Print the program version and exit.
 

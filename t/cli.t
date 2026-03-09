@@ -24,6 +24,12 @@ sub slurp ( $path ) {
   return $content;
 }
 
+sub spurt ( $path, $content ) {
+  open my $fh, '>', $path or die "Cannot open '$path' for writing: $!";
+  print {$fh} $content;
+  close $fh;
+}
+
 subtest 'default mode writes tidied content to stdout' => sub {
   my ( $fh, $path ) = tempfile();
   print {$fh} "alpha  \nbeta\t \n";
@@ -256,6 +262,203 @@ subtest '--version prints version and exits 0' => sub {
         qr/^mojo-prettytidy \Q$Mojo::PrettyTidy::VERSION\E\n\z/,
         '--version prints script version', );
   is $r->{stderr}, '', 'stderr is empty';
+};
+
+############
+
+subtest 'multiple input files with --prefix write sibling outputs' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha  \n" );
+  spurt( $in2, "beta\t \n" );
+
+  my $out1 = File::Spec->catfile( $tmpdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $tmpdir, 'pt.two.html.ep' );
+
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--prefix', 'pt.' ],
+      );
+
+  is $r->{exit},   0,  'multi-file --prefix exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1, 'prefixed output for first file exists';
+  ok -e $out2, 'prefixed output for second file exists';
+
+  is slurp( $out1 ), "alpha\n", 'first prefixed output was tidied';
+  is slurp( $out2 ), "beta\n",  'second prefixed output was tidied';
+
+  is slurp( $in1 ), "alpha  \n", 'first input was not modified';
+  is slurp( $in2 ), "beta\t \n", 'second input was not modified';
+};
+
+subtest 'multiple input files with --prefix and --outdir write to output dir' =>
+    sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha  \n" );
+  spurt( $in2, "beta\t \n" );
+
+  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
+
+  my $r = run_cmd(
+                   argv => [
+                             $^X,   '-Ilib',    $script, $in1, $in2, '--prefix',
+                             'pt.', '--outdir', $outdir
+                   ], );
+
+  is $r->{exit},   0,  'multi-file --prefix --outdir exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1, 'first output file exists in outdir';
+  ok -e $out2, 'second output file exists in outdir';
+
+  is slurp( $out1 ), "alpha\n", 'first outdir file was tidied';
+  is slurp( $out2 ), "beta\n",  'second outdir file was tidied';
+    };
+
+subtest
+    'directory input with --prefix and --outdir writes matching html.ep files'
+    => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+
+  mkdir $indir  or die "Cannot mkdir '$indir': $!";
+  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
+
+  my $ep1 = File::Spec->catfile( $indir, 'one.html.ep' );
+  my $ep2 = File::Spec->catfile( $indir, 'two.html.ep' );
+  my $txt = File::Spec->catfile( $indir, 'ignore.txt' );
+  my $oth = File::Spec->catfile( $indir, 'three.js.ep' );
+
+  spurt( $ep1, "alpha  \n" );
+  spurt( $ep2, "beta\t \n" );
+  spurt( $txt, "leave me alone\n" );
+  spurt( $oth, "also ignored\n" );
+
+  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
+  my $out3 = File::Spec->catfile( $outdir, 'pt.ignore.txt' );
+  my $out4 = File::Spec->catfile( $outdir, 'pt.three.js.ep' );
+
+  my $r = run_cmd(
+                   argv => [
+                             $^X,        '-Ilib', $script,    $indir,
+                             '--prefix', 'pt.',   '--outdir', $outdir
+                   ], );
+
+  is $r->{exit},   0,  'directory input exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1,  'first html.ep output exists';
+  ok -e $out2,  'second html.ep output exists';
+  ok !-e $out3, 'non-template file was ignored';
+  ok !-e $out4, 'non-html.ep ep-like file was ignored';
+
+  is slurp( $out1 ), "alpha\n", 'first directory result was tidied';
+  is slurp( $out2 ), "beta\n",  'second directory result was tidied';
+    };
+
+subtest 'multiple inputs without destination mode are rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha\n" );
+  spurt( $in2, "beta\n" );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2 ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/multiple input/i,
+      'stderr explains multiple inputs need an output mode';
+};
+
+subtest '--write with --prefix is rejected' => sub {
+  my ( $fh, $path ) = tempfile( SUFFIX => '.html.ep' );
+  print {$fh} "alpha  \n";
+  close $fh;
+
+  my $r = run_cmd(
+      argv => [ $^X, '-Ilib', $script, $path, '--write', '--prefix', 'pt.' ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--write cannot be combined with --prefix/,
+      'stderr explains invalid usage';
+};
+
+subtest '--write with --outdir is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
+
+  my ( $fh, $path ) = tempfile( DIR => $tmpdir, SUFFIX => '.html.ep' );
+  print {$fh} "alpha  \n";
+  close $fh;
+
+  my $r = run_cmd(
+    argv => [ $^X, '-Ilib', $script, $path, '--write', '--outdir', $outdir ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--write cannot be combined with --outdir/,
+      'stderr explains invalid usage';
+};
+
+subtest '--output with multiple inputs is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+  my $out = File::Spec->catfile( $tmpdir, 'out.html.ep' );
+
+  spurt( $in1, "alpha\n" );
+  spurt( $in2, "beta\n" );
+
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--output', $out ],
+      );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output.*multiple input|multiple input.*--output/i,
+      'stderr explains invalid usage';
+};
+
+subtest '--check with directory input is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  mkdir $indir or die "Cannot mkdir '$indir': $!";
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--check', $indir ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--check.*single|directory.*not supported/i,
+      'stderr explains invalid usage';
+};
+
+subtest '--diff with directory input is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  mkdir $indir or die "Cannot mkdir '$indir': $!";
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', $indir ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--diff.*single|directory.*not supported/i,
+      'stderr explains invalid usage';
 };
 
 done_testing;

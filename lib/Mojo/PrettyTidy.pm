@@ -104,8 +104,14 @@ sub _apply_basic_indentation ( $self, $text ) {
       if ( _is_ep_control_line( $line ) ) {
         push @out, ( $step x $level ) . $trimmed;
       }
+      elsif ( $line =~ /^\s*%/ ) {
+        my $content_depth = $level + _effective_ep_indent( $ep_level );
+        push @out, ( $step x $content_depth ) . $trimmed;
+      }
       else {
-        push @out, $line;
+        push @out,
+            ( $step x ( $level + _effective_ep_indent( $ep_level ) ) )
+            . $trimmed;
       }
 
       $ep_level++ if _ep_opens_after( $line );

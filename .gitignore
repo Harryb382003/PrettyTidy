@@ -7,3 +7,6 @@ share/samples/parsed.sample_1_stripped.html.ep
 share/samples/sample_1_stripped.html.ep
 .mojo_prettytidy_cpan_quality_notes.txt
 parsed.sample_1_stripped.html.ep
+share/samples/parsed.sample_1_stripped
+share/samples/parsed.sample_1_stripped_2
+share/samples/parsed.sample_1_stripped_2.html.ep

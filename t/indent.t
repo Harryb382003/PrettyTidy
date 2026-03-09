@@ -63,6 +63,60 @@ subtest 'doctype line is kept at current level' => sub {
       'doctype line stays neutral and does not affect nesting';
 };
 
+subtest 'embedded percent code lines align with sibling form content' => sub {
+  my $in = join "\n",
+      "<form>",
+      "<input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "% my \$return_to = '/';",
+      "% my \$qs = '';",
+      "% \$return_to .= \"?\$qs\" if length \$qs;",
+      "<input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
+      "<button type=\"submit\">Add</button>",
+      "</form>",
+      "";
+
+  my $expected = join "\n",
+      "<form>",
+      "  <input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "  % my \$return_to = '/';",
+      "  % my \$qs = '';",
+      "  % \$return_to .= \"?\$qs\" if length \$qs;",
+"  <input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
+      "  <button type=\"submit\">Add</button>",
+      "</form>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'embedded percent code lines align with sibling content';
+};
+
+subtest 'embedded percent code lines indent locally inside html block' => sub {
+  my $in = join "\n",
+      "<form>",
+      "<input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "% my \$return_to = '/';",
+      "% my \$qs = '';",
+      "% \$return_to .= \"?\$qs\" if length \$qs;",
+      "<input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
+      "<button type=\"submit\">Add</button>",
+      "</form>",
+      "";
+
+  my $expected = join "\n",
+      "<form>",
+      "  <input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "  % my \$return_to = '/';",
+      "  % my \$qs = '';",
+      "  % \$return_to .= \"?\$qs\" if length \$qs;",
+"  <input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
+      "  <button type=\"submit\">Add</button>",
+      "</form>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'embedded percent code lines inherit local indentation';
+};
+
 subtest 'ep wrapper keeps opening and closing html aligned' => sub {
   my $in = join "\n", "% if (\$show) {", "<div>", "</div>", "% }", "";
 
@@ -187,7 +241,7 @@ subtest 'html comment near EP lines is left safe' => sub {
   my $in = "<div>\n<%= \$title %>\n<!-- note -->\n<p>\nHello\n</p>\n</div>\n";
 
   my $expected =
-"<div>\n<%= \$title %>\n  <!-- note -->\n  <p>\n    Hello\n  </p>\n</div>\n";
+"<div>\n  <%= \$title %>\n  <!-- note -->\n  <p>\n    Hello\n  </p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'comment line indents normally while EP line stays untouched';
@@ -220,7 +274,8 @@ subtest 'leading EP tag lines are left alone' => sub {
 subtest 'mixed EP block tag line is left alone' => sub {
   my $in = "<div>\n<% if (\$ok) { %>\n<p>Hello</p>\n<% } %>\n</div>\n";
 
-  my $expected = "<div>\n<% if (\$ok) { %>\n  <p>Hello</p>\n<% } %>\n</div>\n";
+  my $expected =
+      "<div>\n  <% if (\$ok) { %>\n  <p>Hello</p>\n  <% } %>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'mixed EP block lines are not reindented';
 };
@@ -307,7 +362,7 @@ subtest 'multiline html comment near EP lines keeps EP safe' => sub {
   my $in = "<div>\n<%= \$title %>\n<!--\nnote\n-->\n<p>\nHello\n</p>\n</div>\n";
 
   my $expected =
-"<div>\n<%= \$title %>\n  <!--\n  note\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
+"<div>\n  <%= \$title %>\n  <!--\n  note\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'multiline comment block indents normally while EP line stays untouched';
@@ -516,7 +571,7 @@ subtest 'plain text navigation fallback inside EP block is indented' => sub {
 subtest 'plain text near EP lines indented but EP lines are left alone' => sub {
   my $in = "<div>\n<%= \$title %>\n<p>\nHello\n</p>\n</div>\n";
 
-  my $expected = "<div>\n<%= \$title %>\n  <p>\n    Hello\n  </p>\n</div>\n";
+  my $expected = "<div>\n  <%= \$title %>\n  <p>\n    Hello\n  </p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'plain text is indented and EP line is preserved';
@@ -546,7 +601,7 @@ subtest 'script block near EP lines keeps EP safe' => sub {
 "<div>\n<%= \$title %>\n<script>\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
 
   my $expected =
-"<div>\n<%= \$title %>\n  <script>\n  if (x < 10) {\n  console.log(x);\n  }\n  </script>\n</div>\n";
+"<div>\n  <%= \$title %>\n  <script>\n  if (x < 10) {\n  console.log(x);\n  }\n  </script>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'script block indents normally while EP line stays untouched';
@@ -587,8 +642,7 @@ subtest 'style block near EP lines keeps EP safe' => sub {
 "<div>\n<%= \$title %>\n<style>\n.foo {\ncolor: red;\n}\n</style>\n</div>\n";
 
   my $expected =
-"<div>\n<%= \$title %>\n  <style>\n  .foo {\n  color: red;\n  }\n  </style>\n</div>\n";
-
+"<div>\n  <%= \$title %>\n  <style>\n  .foo {\n  color: red;\n  }\n  </style>\n</div>\n";
   is $pt->tidy( $in ), $expected,
       'style block indents normally while EP line stays untouched';
 };
