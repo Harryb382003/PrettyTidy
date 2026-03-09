@@ -5,3 +5,5 @@ mojo_prettytidy_cpan_quality_notes.txt
 MANIFEST.bak
 MANIFEST.bak
 MANIFEST.SKIP
+share/samples/parsed.sample_1_stripped.html.ep
+share/samples/sample_1_stripped.html.ep

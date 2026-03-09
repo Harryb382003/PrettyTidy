@@ -62,7 +62,7 @@ subtest 'leading EP tag lines are left alone' => sub {
 subtest 'mixed EP block tag line is left alone' => sub {
   my $in = "<div>\n<% if (\$ok) { %>\n<p>Hello</p>\n<% } %>\n</div>\n";
 
-  my $expected = "<div>\n<% if (\$ok) { %>\n<p>Hello</p>\n<% } %>\n</div>\n";
+  my $expected = "<div>\n<% if (\$ok) { %>\n  <p>Hello</p>\n<% } %>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'mixed EP block lines are not reindented';
 };
@@ -109,8 +109,6 @@ subtest 'nested multiline inline style follows html indentation' => sub {
       'multiline inline style declarations follow surrounding html indentation';
 };
 
-###########
-
 subtest 'multiline inline style with EP is left alone' => sub {
   my $in =
 "<div style=\"\ncolor:<%= \$color %>;\nbackground:#151515;\n\">\n</div>\n";
@@ -122,8 +120,6 @@ subtest 'multiline inline style with EP is left alone' => sub {
       'multiline inline style attribute containing EP is not reformatted';
 };
 
-##############
-
 subtest 'single-line inline style attribute is left alone' => sub {
   my $in = qq{<div style="position:absolute; top:6%; left:50%;">\n</div>\n};
 
@@ -134,10 +130,43 @@ subtest 'single-line inline style attribute is left alone' => sub {
       'single-line inline style attribute is left untouched';
 };
 
+subtest 'paginate per-page block keeps html structure near EP lines' => sub {
+  my $in = join "\n",
+      "% if (\$mode eq 'paginate') {",
+      "<label>",
+      "Per page:",
+      "<select>",
+      "% for my \$n (20, 50) {",
+      "<option>n</option>",
+      "% }",
+      "</select>",
+      "</label>",
+      "<input>",
+      "% }",
+      "";
+
+  my $expected = join "\n",
+      "% if (\$mode eq 'paginate') {",
+      "  <label>",
+      "    Per page:",
+      "    <select>",
+      "% for my \$n (20, 50) {",
+      "        <option>n</option>",
+      "% }",
+      "    </select>",
+      "  </label>",
+      "  <input>",
+      "% }",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'html remains nested correctly around paginate EP lines';
+};
+
 subtest 'percent directive lines are left structurally alone' => sub {
   my $in = "% if (\$ok) {\n<div>\n<p>Hello</p>\n</div>\n% }\n";
 
-  my $expected = "% if (\$ok) {\n<div>\n<p>Hello</p>\n</div>\n% }\n";
+  my $expected = "% if (\$ok) {\n  <div>\n    <p>Hello</p>\n  </div>\n% }\n";
 
   is $pt->tidy( $in ), $expected, 'percent directive lines remain untouched';
 };
@@ -163,7 +192,7 @@ subtest 'plain text near EP lines indented but EP lines are left alone' => sub {
 subtest 'single-line mixed tag/content lines are left alone' => sub {
   my $in = "<div>\n<p>Hello</p>\n</div>\n";
 
-  my $expected = "<div>\n<p>Hello</p>\n</div>\n";
+  my $expected = "<div>\n  <p>Hello</p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'mixed content line is left alone';
 };
@@ -240,6 +269,161 @@ subtest 'void elements do not increase indentation' => sub {
       "<div>\n  <img src=\"x.png\">\n  <p>\n    Hello\n  </p>\n</div>\n";
 
   is $pt->tidy( $in ), $expected, 'void tags do not shift indentation depth';
+};
+
+############
+
+subtest 'label line with inline text is left alone' => sub {
+  my $in = "<label>Search:</label>\n";
+
+  my $expected = "<label>Search:</label>\n";
+
+  is $pt->tidy( $in ), $expected, 'inline label content is not reformatted';
+};
+
+subtest 'paragraph line with inline EP is left alone' => sub {
+  my $in = "Found: <%= \$found %>\n";
+
+  my $expected = "Found: <%= \$found %>\n";
+
+  is $pt->tidy( $in ), $expected, 'inline EP content line is not reformatted';
+};
+
+subtest 'anchor line with inline text is left alone' => sub {
+  my $in = "<a href=\"/x\">First</a>\n";
+
+  my $expected = "<a href=\"/x\">First</a>\n";
+
+  is $pt->tidy( $in ), $expected, 'inline anchor content is not reformatted';
+};
+
+subtest 'separator text line inside EP block is indented as plain text' => sub {
+  my $in = join "\n", "% if (\$page > 1) {", "|", "% }", "";
+
+  my $expected = join "\n", "% if (\$page > 1) {", "  |", "% }", "";
+
+  is $pt->tidy( $in ), $expected,
+      'plain separator text follows EP indentation level';
+};
+
+subtest 'plain text navigation fallback inside EP block is indented' => sub {
+  my $in = join "\n", "% if (\$page > 1) {", "First | Prev", "% }", "";
+
+  my $expected = join "\n", "% if (\$page > 1) {", "  First | Prev", "% }", "";
+
+  is $pt->tidy( $in ), $expected,
+      'plain fallback text follows EP indentation level';
+};
+
+############
+
+subtest 'ep wrapper keeps opening and closing html aligned' => sub {
+  my $in = join "\n", "% if (\$show) {", "<div>", "</div>", "% }", "";
+
+  my $expected = join "\n", "% if (\$show) {", "  <div>", "  </div>", "% }", "";
+
+  is $pt->tidy( $in ), $expected,
+      'opening and closing tags stay aligned inside EP block';
+};
+
+subtest 'ep wrapper with inner branch keeps plain text and links aligned' =>
+    sub {
+  my $in = join "\n",
+      "% if (\$pages > 1) {",
+      "<div>",
+      "% if (\$page > 1) {",
+      "<a>First</a>",
+      "|",
+      "<a>Prev</a>",
+      "% } else {",
+      "First | Prev",
+      "% }",
+      "</div>",
+      "% }",
+      "";
+
+  my $expected = join "\n",
+      "% if (\$pages > 1) {",
+      "  <div>",
+      "% if (\$page > 1) {",
+      "      <a>First</a>",
+      "    |",
+      "      <a>Prev</a>",
+      "% } else {",
+      "    First | Prev",
+      "% }",
+      "  </div>",
+      "% }",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'plain text inside nested EP branch follows surrounding html depth';
+    };
+
+subtest 'td action block stays aligned across EP branch' => sub {
+  my $in = join "\n",
+      "<td>",
+      "% if (stash('dev_mode')) {",
+      "<div>",
+      "<form>",
+      "</form>",
+      "</div>",
+      "% } else {",
+      "<em>dev</em>",
+      "% }",
+      "</td>",
+      "";
+
+  my $expected = join "\n",
+      "<td>",
+      "% if (stash('dev_mode')) {",
+      "    <div>",
+      "      <form>",
+      "      </form>",
+      "    </div>",
+      "% } else {",
+      "    <em>dev</em>",
+      "% }",
+      "</td>",
+      "";
+  my $expected = join "\n",
+      "<td>",
+      "% if (stash('dev_mode')) {",
+      "    <div>",
+      "      <form>",
+      "      </form>",
+      "    </div>",
+      "% } else {",
+      "    <em>dev</em>",
+      "% }",
+      "</td>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'html opened under td remains aligned across EP branch';
+};
+
+subtest 'mixed inline children align under parent' => sub {
+  my $in = join "\n",
+      "<div>",
+"<div style=\"margin-top:12px; border-top:1px solid #2a2a2a; padding-top:10px;\">",
+"<div id=\"vmCount\" style=\"font-weight:700; margin-bottom:6px;\">Contents</div>",
+"<ul id=\"vmList\" style=\"margin:0; padding-left:18px; line-height:1.35;\"></ul>",
+      "</div>",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+"  <div style=\"margin-top:12px; border-top:1px solid #2a2a2a; padding-top:10px;\">",
+"    <div id=\"vmCount\" style=\"font-weight:700; margin-bottom:6px;\">Contents</div>",
+"    <ul id=\"vmList\" style=\"margin:0; padding-left:18px; line-height:1.35;\"></ul>",
+      "  </div>",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'mixed inline child lines align under parent block';
 };
 
 done_testing;

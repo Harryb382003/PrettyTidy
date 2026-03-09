@@ -11,12 +11,12 @@ use File::Spec;
 use Mojo::PrettyTidy;
 use Test::CLI::Capture qw(run_cmd);
 
-my $script = File::Spec->catfile(qw(script mojo-prettytidy));
+my $script = File::Spec->catfile( qw(script mojo-prettytidy) );
 
 ok -e $script, 'CLI script exists';
 ok -x $script, 'CLI script is executable';
 
-sub slurp ($path) {
+sub slurp ( $path ) {
   open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
   local $/;
   my $content = <$fh>;
@@ -29,14 +29,12 @@ subtest 'default mode writes tidied content to stdout' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $path ], );
 
-  is $r->{exit},   0,               'exit status is 0';
-  is $r->{stdout}, "alpha\nbeta\n", 'stdout contains tidied content';
-  is $r->{stderr}, '',              'stderr is empty';
-  is slurp($path), "alpha  \nbeta\t \n", 'input file was not modified';
+  is $r->{exit},     0,                    'exit status is 0';
+  is $r->{stdout},   "alpha\nbeta\n",      'stdout contains tidied content';
+  is $r->{stderr},   '',                   'stderr is empty';
+  is slurp( $path ), "alpha  \nbeta\t \n", 'input file was not modified';
 };
 
 subtest '--backup without --write is rejected' => sub {
@@ -44,12 +42,11 @@ subtest '--backup without --write is rejected' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--backup', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--backup', $path ], );
 
   isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--backup requires --write/, 'stderr explains invalid usage';
+  like $r->{stderr}, qr/--backup requires --write/,
+      'stderr explains invalid usage';
 };
 
 subtest '--check returns 0 for tidy input' => sub {
@@ -57,9 +54,7 @@ subtest '--check returns 0 for tidy input' => sub {
   print {$fh} "alpha\nbeta\n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--check', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--check', $path ], );
 
   is $r->{exit},   0,  '--check exits 0 when no changes are needed';
   is $r->{stdout}, '', 'stdout is empty';
@@ -71,9 +66,7 @@ subtest '--check returns 1 for untidy input' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--check', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--check', $path ], );
 
   is $r->{exit},   1,  '--check exits 1 when changes would be made';
   is $r->{stdout}, '', 'stdout is empty';
@@ -85,31 +78,28 @@ subtest '--diff returns 0 when no changes are needed' => sub {
   print {$fh} "alpha\nbeta\n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--diff', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', $path ], );
 
   is $r->{exit},   0,  '--diff exits 0 when no changes are needed';
   is $r->{stdout}, '', 'stdout is empty when no diff is needed';
   is $r->{stderr}, '', 'stderr is empty';
 };
 
-
 subtest '--diff returns 1 and prints diff when changes are needed' => sub {
   my ( $fh, $path ) = tempfile();
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--diff', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', $path ], );
 
   is $r->{exit}, 1, '--diff exits 1 when changes are found';
-  like $r->{stdout}, qr/^\-\-\- \Q$path\E \(original\)$/m, 'diff includes original header';
-  like $r->{stdout}, qr/^\+\+\+ \Q$path\E \(tidied\)$/m,   'diff includes tidied header';
-  like $r->{stdout}, qr/^\@\@ /m,                          'diff includes hunk header';
-  like $r->{stdout}, qr/^-alpha  $/m,                     'diff shows original line';
-  like $r->{stdout}, qr/^\+alpha$/m,                      'diff shows tidied line';
+  like $r->{stdout}, qr/^\-\-\- \Q$path\E \(original\)$/m,
+      'diff includes original header';
+  like $r->{stdout}, qr/^\+\+\+ \Q$path\E \(tidied\)$/m,
+      'diff includes tidied header';
+  like $r->{stdout}, qr/^\@\@ /m,     'diff includes hunk header';
+  like $r->{stdout}, qr/^-alpha  $/m, 'diff shows original line';
+  like $r->{stdout}, qr/^\+alpha$/m,  'diff shows tidied line';
   is $r->{stderr}, '', 'stderr is empty';
 };
 
@@ -118,19 +108,17 @@ subtest '--diff with --write is rejected' => sub {
   print {$fh} "alpha  \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--diff', '--write', $path ],
-  );
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', '--write', $path ], );
 
   isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--diff cannot be combined with --write/, 'stderr explains invalid usage';
+  like $r->{stderr}, qr/--diff cannot be combined with --write/,
+      'stderr explains invalid usage';
 };
 
 subtest '--stdin reads stdin and writes stdout' => sub {
-  my $r = run_cmd(
-    argv  => [ $^X, '-Ilib', $script, '--stdin' ],
-    stdin => "alpha  \nbeta\t \n",
-  );
+  my $r = run_cmd( argv  => [ $^X, '-Ilib', $script, '--stdin' ],
+                   stdin => "alpha  \nbeta\t \n", );
 
   is $r->{exit},   0,               '--stdin exits 0';
   is $r->{stdout}, "alpha\nbeta\n", '--stdin writes tidied content';
@@ -142,14 +130,12 @@ subtest '--write rewrites the file in place' => sub {
   print {$fh} "alpha  \nbeta\t \n";
   close $fh;
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--write', $path ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--write', $path ], );
 
-  is $r->{exit},   0,  '--write exits 0';
-  is $r->{stdout}, '', 'stdout is empty';
-  is $r->{stderr}, '', 'stderr is empty';
-  is slurp($path), "alpha\nbeta\n", 'file was rewritten in place';
+  is $r->{exit},     0,               '--write exits 0';
+  is $r->{stdout},   '',              'stdout is empty';
+  is $r->{stderr},   '',              'stderr is empty';
+  is slurp( $path ), "alpha\nbeta\n", 'file was rewritten in place';
 };
 
 subtest '--write --backup creates backup and rewrites file' => sub {
@@ -159,16 +145,17 @@ subtest '--write --backup creates backup and rewrites file' => sub {
 
   my $backup_path = $path . '.bak';
 
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--write', '--backup', $path ],
-  );
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, '--write', '--backup', $path ],
+      );
 
   is $r->{exit},   0,  '--write --backup exits 0';
   is $r->{stdout}, '', 'stdout is empty';
   is $r->{stderr}, '', 'stderr is empty';
   ok -e $backup_path, 'backup file exists';
-  is slurp($backup_path), "alpha  \nbeta\t \n", 'backup contains original content';
-  is slurp($path),       "alpha\nbeta\n",       'original file was rewritten';
+  is slurp( $backup_path ), "alpha  \nbeta\t \n",
+      'backup contains original content';
+  is slurp( $path ), "alpha\nbeta\n", 'original file was rewritten';
 };
 
 subtest '--write --backup-ext uses custom suffix' => sub {
@@ -179,29 +166,77 @@ subtest '--write --backup-ext uses custom suffix' => sub {
   my $backup_path = $path . '.orig';
 
   my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--write', '--backup', '--backup-ext=.orig', $path ],
-  );
+                   argv => [
+                             $^X,        '-Ilib',
+                             $script,    '--write',
+                             '--backup', '--backup-ext=.orig',
+                             $path
+                   ], );
 
   is $r->{exit},   0,  'custom backup suffix exits 0';
   is $r->{stdout}, '', 'stdout is empty';
   is $r->{stderr}, '', 'stderr is empty';
   ok -e $backup_path, 'custom backup file exists';
-  is slurp($backup_path), "alpha  \nbeta\t \n", 'custom backup contains original content';
-  is slurp($path),       "alpha\nbeta\n",       'original file was rewritten';
+  is slurp( $backup_path ), "alpha  \nbeta\t \n",
+      'custom backup contains original content';
+  is slurp( $path ), "alpha\nbeta\n", 'original file was rewritten';
 };
 
 subtest '--version prints version and exits 0' => sub {
-  my $r = run_cmd(
-    argv => [ $^X, '-Ilib', $script, '--version' ],
-  );
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--version' ], );
 
   is $r->{exit}, 0, '--version exits 0';
-  like(
-    $r->{stdout},
-    qr/^mojo-prettytidy \Q$Mojo::PrettyTidy::VERSION\E\n\z/,
-    '--version prints script version',
-  );
+  like( $r->{stdout},
+        qr/^mojo-prettytidy \Q$Mojo::PrettyTidy::VERSION\E\n\z/,
+        '--version prints script version', );
   is $r->{stderr}, '', 'stderr is empty';
+};
+
+subtest '--output writes tidied content to a separate file' => sub {
+  my ( $in_fh,  $in_path )  = tempfile();
+  my ( $out_fh, $out_path ) = tempfile();
+  close $out_fh;
+
+  print {$in_fh} "alpha  \nbeta\t \n";
+  close $in_fh;
+
+  my $r = run_cmd(
+          argv => [ $^X, '-Ilib', $script, '--output', $out_path, $in_path ], );
+
+  is $r->{exit},         0,                    '--output exits 0';
+  is $r->{stdout},       '',                   'stdout is empty';
+  is $r->{stderr},       '',                   'stderr is empty';
+  is slurp( $in_path ),  "alpha  \nbeta\t \n", 'input file was not modified';
+  is slurp( $out_path ), "alpha\nbeta\n", 'output file received tidied content';
+};
+
+subtest '--output with --write is rejected' => sub {
+  my ( $fh, $path ) = tempfile();
+  print {$fh} "alpha  \n";
+  close $fh;
+
+  my $r = run_cmd(
+     argv => [ $^X, '-Ilib', $script, '--write', '--output', 'out.txt', $path ],
+  );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output cannot be combined with --write/,
+      'stderr explains invalid usage';
+};
+
+subtest '--stdin with --output writes tidied content to a file' => sub {
+  my ( $fh, $out_path ) = tempfile();
+  close $fh;
+
+  my $r = run_cmd(
+           argv  => [ $^X, '-Ilib', $script, '--stdin', '--output', $out_path ],
+           stdin => "alpha  \nbeta\t \n", );
+
+  is $r->{exit},   0,  '--stdin with --output exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  is slurp( $out_path ), "alpha\nbeta\n",
+      'output file received tidied stdin content';
 };
 
 done_testing;

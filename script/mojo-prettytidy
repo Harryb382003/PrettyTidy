@@ -12,18 +12,20 @@ use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
 use Pod::Usage             qw(pod2usage);
 
-my $write      = 0;
-my $check      = 0;
-my $help       = 0;
-my $man        = 0;
-my $stdin      = 0;
-my $version    = 0;
-my $backup     = 0;
-my $diff       = 0;
-my $backup_ext = '.bak';
+my $write       = 0;
+my $check       = 0;
+my $help        = 0;
+my $man         = 0;
+my $output_path = '';
+my $stdin       = 0;
+my $version     = 0;
+my $backup      = 0;
+my $diff        = 0;
+my $backup_ext  = '.bak';
 
 GetOptions(
             'write|w'      => \$write,
+            'output|o=s'   => \$output_path,
             'check|c'      => \$check,
             'stdin'        => \$stdin,
             'version|V'    => \$version,
@@ -50,6 +52,15 @@ pod2usage( "--stdin cannot be combined with --backup\n" ) if $stdin && $backup;
 pod2usage( "--diff cannot be combined with --write\n" )   if $diff  && $write;
 pod2usage( "--diff cannot be combined with --stdin\n" )   if $diff  && $stdin;
 
+pod2usage( "--output cannot be combined with --write\n" )
+    if $output_path && $write;
+
+pod2usage( "--output cannot be combined with --check\n" )
+    if $output_path && $check;
+
+pod2usage( "--output cannot be combined with --diff\n" )
+    if $output_path && $diff;
+
 my $pt = Mojo::PrettyTidy->new;
 
 if ( $stdin ) {
@@ -58,6 +69,11 @@ if ( $stdin ) {
 
   if ( $check ) {
     exit( $output eq $input ? 0 : 1 );
+  }
+
+  if ( $output_path ) {
+    _spew( $output_path, $output );
+    exit 0;
   }
 
   print $output;
@@ -88,6 +104,11 @@ if ( $diff ) {
     exit 1;
   }
 
+  exit 0;
+}
+
+if ( $output_path ) {
+  _spew( $output_path, $output );
   exit 0;
 }
 
@@ -131,6 +152,7 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
+        mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
     mojo-prettytidy --write file.html.ep
@@ -174,6 +196,13 @@ would be made.
 Print a minimal unified-style diff showing what would change, and exit
 with status C<0> if no changes are needed or C<1> if differences are
 found.
+
+=head2 --output, -o
+
+Write the tidied result to the specified output file instead of standard
+output.
+
+This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
 
 =head2 --stdin
 

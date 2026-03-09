@@ -39,6 +39,7 @@ Replace file.html.ep with your template file.
 mojo-prettytidy file.html.ep
 mojo-prettytidy --check file.html.ep
 mojo-prettytidy --diff file.html.ep
+mojo-prettytidy --output parsed.file.html.ep file.html.ep
 mojo-prettytidy --write file.html.ep
 mojo-prettytidy --write --backup file.html.ep
 mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
@@ -49,6 +50,8 @@ Notes:
 
 --backup requires --write.
 --backup-ext is used with --write --backup.
+--output writes the tidied result to a separate file.
+--write and --output cannot be used together.
 Use --diff to review what would change before rewriting a file.
 When rewriting files in place, use --backup to preserve the original first.
 
