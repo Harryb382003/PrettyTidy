@@ -50,6 +50,9 @@ sub _apply_basic_indentation ( $self, $text ) {
   my $in_style_block        = 0;
   my $in_inline_style_block = 0;
   my $inline_style_base     = 0;
+  my $in_multiline_tag_open = 0;
+  my $multiline_tag_base    = 0;
+  my $multiline_tag_opens   = 0;
   my @inline_style_lines;
 
   for my $line ( @lines ) {
@@ -77,6 +80,18 @@ sub _apply_basic_indentation ( $self, $text ) {
       next;
     }
 
+    if ( $in_multiline_tag_open ) {
+      push @out, ( $step x ( $multiline_tag_base + 1 ) ) . $trimmed;
+
+      if ( _is_tag_end_line( $trimmed ) ) {
+        $level++ if $multiline_tag_opens && $trimmed !~ /\/>\s*$/;
+        $in_multiline_tag_open = 0;
+        $multiline_tag_opens   = 0;
+      }
+
+      next;
+    }
+
     if ( _is_html_line_with_ep( $trimmed ) ) {
       push @out,
           ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
@@ -94,6 +109,23 @@ sub _apply_basic_indentation ( $self, $text ) {
       }
 
       $ep_level++ if _ep_opens_after( $line );
+      next;
+    }
+
+    if ( _is_multiline_tag_start_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
+
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
+
+      $in_multiline_tag_open = 1;
+      $multiline_tag_base    = $level + _effective_ep_indent( $ep_level );
+      $multiline_tag_opens =
+          ( defined $tag
+            && !_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+          ? 1
+          : 0;
+
       next;
     }
 
@@ -138,6 +170,16 @@ sub _apply_basic_indentation ( $self, $text ) {
       push @out,
           ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
       $in_comment_block = 1 unless _is_html_comment_line( $trimmed );
+      next;
+    }
+
+    if ( _is_multiline_tag_start_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
+
+      $in_multiline_tag_open = 1;
+      $multiline_tag_base    = $level + _effective_ep_indent( $ep_level );
+
       next;
     }
 
@@ -231,6 +273,14 @@ sub _effective_ep_indent ( $ep_level ) {
   return $ep_level > 0 ? 1 : 0;
 }
 
+sub _ensure_final_newline ( $self, $text ) {
+  $text = '' unless defined $text;
+
+  $text =~ s/\n*\z/\n/;
+
+  return $text;
+}
+
 sub _ep_opens_after ( $line ) {
   return 0 unless defined $line;
   return $line =~ /^\s*%.*\{\s*$/ ? 1 : 0;
@@ -266,6 +316,12 @@ sub _format_inline_style_block ( $self, $lines, $base, $step ) {
   }
 
   return @out;
+}
+
+sub _inline_style_tag_name ( $line ) {
+  return $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*\bstyle="\s*$/
+      ? $1
+      : undef;
 }
 
 sub _is_doctype_line ( $line ) {
@@ -304,12 +360,6 @@ sub _is_inline_style_closing_only_line ( $line ) {
   return $line =~ /^\s*">\s*$/ ? 1 : 0;
 }
 
-sub _inline_style_tag_name ( $line ) {
-  return $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*\bstyle="\s*$/
-      ? $1
-      : undef;
-}
-
 sub _is_mixed_inline_html_line ( $line ) {
   return 0 if !defined $line || $line eq '';
   return 0 if _line_contains_ep( $line );
@@ -323,6 +373,13 @@ sub _is_mixed_inline_html_line ( $line ) {
   return 1 if $line =~ /</ && $line =~ />/;
 
   return 0;
+}
+
+sub _is_multiline_tag_start_line ( $line ) {
+  return 0 unless defined $line;
+  return 0 if $line =~ /^\s*<%/;
+  return 0 if _is_inline_style_start_line( $line );
+  return $line =~ /^\s*<[^\/!][^>]*$/ ? 1 : 0;
 }
 
 sub _is_plain_text_line ( $line ) {
@@ -369,6 +426,11 @@ sub _is_style_end_line ( $line ) {
   return $line =~ /^\s*<\/style>\s*$/i ? 1 : 0;
 }
 
+sub _is_tag_end_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ />\s*$/ ? 1 : 0;
+}
+
 sub _is_void_html_tag ( $tag ) {
   state %void = map { $_ => 1 } qw(
       area base br col embed hr img input link meta param source track wbr
@@ -382,24 +444,8 @@ sub _is_void_html_or_self_closing_tag ( $tag, $line ) {
   return _is_void_html_tag( $tag );
 }
 
-sub _ensure_final_newline ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/\n*\z/\n/;
-
-  return $text;
-}
-
 sub _line_contains_ep ( $line ) {
   return $line =~ /<%|^\s*%/ ? 1 : 0;
-}
-
-sub _strip_trailing_whitespace ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/[ \t]+$//mg;
-
-  return $text;
 }
 
 sub _normalize_line_endings ( $self, $text ) {
@@ -407,6 +453,14 @@ sub _normalize_line_endings ( $self, $text ) {
 
   $text =~ s/\r\n/\n/g;
   $text =~ s/\r/\n/g;
+
+  return $text;
+}
+
+sub _strip_trailing_whitespace ( $self, $text ) {
+  $text = '' unless defined $text;
+
+  $text =~ s/[ \t]+$//mg;
 
   return $text;
 }
