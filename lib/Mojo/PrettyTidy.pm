@@ -51,6 +51,7 @@ sub _apply_basic_indentation ( $self, $text ) {
   my $in_inline_style_block = 0;
   my $inline_style_base     = 0;
   my $in_multiline_tag_open = 0;
+  my $style_inner_level     = 0;
   my $multiline_tag_base    = 0;
   my $multiline_tag_opens   = 0;
   my @inline_style_lines;
@@ -64,9 +65,14 @@ sub _apply_basic_indentation ( $self, $text ) {
       push @inline_style_lines, $line;
 
       if ( _is_inline_style_end_line( $trimmed ) ) {
+        my $tail_has_closing_tag =
+            _inline_style_tail_has_closing_tag( $trimmed );
+
         push @out,
             $self->_format_inline_style_block( \@inline_style_lines,
                                                $inline_style_base, $step, );
+
+        $level-- if $tail_has_closing_tag && $level > 0;
 
         @inline_style_lines    = ();
         $in_inline_style_block = 0;
@@ -102,11 +108,13 @@ sub _apply_basic_indentation ( $self, $text ) {
       $ep_level-- if _ep_closes_before( $line ) && $ep_level > 0;
 
       if ( _is_ep_control_line( $line ) ) {
-        push @out, ( $step x $level ) . $trimmed;
+        my $ep_line = _normalize_percent_line( $trimmed );
+        push @out, ( $step x $level ) . $ep_line;
       }
       elsif ( $line =~ /^\s*%/ ) {
+        my $ep_line       = _normalize_percent_line( $trimmed );
         my $content_depth = $level + _effective_ep_indent( $ep_level );
-        push @out, ( $step x $content_depth ) . $trimmed;
+        push @out, ( $step x $content_depth ) . $ep_line;
       }
       else {
         push @out,
@@ -161,11 +169,26 @@ sub _apply_basic_indentation ( $self, $text ) {
 
       if ( _is_style_end_line( $trimmed ) ) {
         push @out, ( $step x $base ) . $trimmed;
-        $in_style_block = 0;
+        $in_style_block    = 0;
+        $style_inner_level = 0;
+        next;
       }
-      else {
-        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+
+      my $line_level = $style_inner_level;
+
+      # Dedent closing-brace lines before printing
+      if ( $trimmed =~ /^\}/ ) {
+        $line_level-- if $line_level > 0;
       }
+
+      push @out, ( $step x ( $base + 1 + $line_level ) ) . $trimmed;
+
+      # One-line brace rules stay effectively unchanged
+      my $opens  = () = $trimmed =~ /\{/g;
+      my $closes = () = $trimmed =~ /\}/g;
+
+      $style_inner_level += $opens - $closes;
+      $style_inner_level = 0 if $style_inner_level < 0;
 
       next;
     }
@@ -213,7 +236,8 @@ sub _apply_basic_indentation ( $self, $text ) {
     if ( _is_style_start_line( $trimmed ) ) {
       push @out,
           ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
-      $in_style_block = 1 unless _is_style_end_line( $trimmed );
+      $in_style_block    = 1 unless _is_style_end_line( $trimmed );
+      $style_inner_level = 0;
       next;
     }
 
@@ -321,18 +345,34 @@ sub _format_inline_style_block ( $self, $lines, $base, $step ) {
 
     if ( $i == 0 ) {
       push @out, ( $step x $base ) . $trimmed;
+      next;
     }
-    elsif ( $i == $#$lines ) {
-      if ( _is_inline_style_closing_only_line( $trimmed ) ) {
+
+    if ( $i == $#$lines ) {
+      my @tail = _split_inline_style_tail( $trimmed );
+
+      if ( @tail ) {
+        my ( $style_close, $content, $closing_tag ) = @tail;
+
+        push @out, ( $step x ( $base + 1 ) ) . $style_close;
+        push @out, ( $step x ( $base + 1 ) ) . $content
+            if defined $content && length $content;
+        push @out, ( $step x $base ) . $closing_tag
+            if defined $closing_tag && length $closing_tag;
+
+        next;
+      }
+
+      if ( $trimmed =~ /^\s*">\s*$/ ) {
         push @out, ( $step x $base ) . $trimmed;
+        next;
       }
-      else {
-        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
-      }
-    }
-    else {
+
       push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+      next;
     }
+
+    push @out, ( $step x ( $base + 1 ) ) . $trimmed;
   }
 
   return @out;
@@ -342,6 +382,11 @@ sub _inline_style_tag_name ( $line ) {
   return $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*\bstyle="\s*$/
       ? $1
       : undef;
+}
+
+sub _inline_style_tail_has_closing_tag ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /<\/[A-Za-z][A-Za-z0-9:_-]*>\s*$/ ? 1 : 0;
 }
 
 sub _is_doctype_line ( $line ) {
@@ -373,7 +418,8 @@ sub _is_inline_style_start_line ( $line ) {
 }
 
 sub _is_inline_style_end_line ( $line ) {
-  return $line =~ /">\s*$/ ? 1 : 0;
+  return 0 unless defined $line;
+  return $line =~ /">\s*(?:.*)?$/ ? 1 : 0;
 }
 
 sub _is_inline_style_closing_only_line ( $line ) {
@@ -475,6 +521,26 @@ sub _normalize_line_endings ( $self, $text ) {
   $text =~ s/\r/\n/g;
 
   return $text;
+}
+
+sub _normalize_percent_line ( $line ) {
+  return $line unless defined $line;
+  $line =~ s/^\s*%\s*/% /;
+  return $line;
+}
+
+sub _split_inline_style_tail ( $line ) {
+  return unless defined $line;
+
+  if ( $line =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( $1, $2, $3 );
+  }
+
+  if ( $line =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( $1, undef, $2 );
+  }
+
+  return;
 }
 
 sub _strip_trailing_whitespace ( $self, $text ) {

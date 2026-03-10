@@ -400,6 +400,66 @@ subtest 'multiline inline style with EP is left alone' => sub {
       'multiline inline style attribute containing EP is not reformatted';
 };
 
+subtest 'multiline inline style with inline content under form stays aligned' =>
+    sub {
+  my $in = join "\n",
+      "<form>",
+      "<button type=\"submit\" style=\"",
+      "background:#2d6cdf;",
+      "color:#fff;",
+      "cursor:pointer;\">Add</button>",
+      "</form>",
+      "";
+
+  my $expected = join "\n",
+      "<form>",
+      "  <button type=\"submit\" style=\"",
+      "    background:#2d6cdf;",
+      "    color:#fff;",
+      "    cursor:pointer;\">",
+      "    Add",
+      "  </button>",
+      "</form>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'multiline inline style button stays aligned inside form';
+    };
+
+subtest 'multiline inline style with inline content splits into block form' =>
+    sub {
+  my $in = join "\n",
+      "<div>",
+      "<button type=\"submit\" style=\"",
+      "background:#2d6cdf;",
+      "color:#fff;",
+      "border:0;",
+      "border-radius:8px;",
+      "padding:8px 12px;",
+      "font-weight:600;",
+      "cursor:pointer;\">Add</button>",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      "  <button type=\"submit\" style=\"",
+      "    background:#2d6cdf;",
+      "    color:#fff;",
+      "    border:0;",
+      "    border-radius:8px;",
+      "    padding:8px 12px;",
+      "    font-weight:600;",
+      "    cursor:pointer;\">",
+      "    Add",
+      "  </button>",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'multiline inline style with inline content becomes block form';
+    };
+
 subtest 'multiline opening tag aligns under parent' => sub {
   my $in = join "\n",
       "<div>",
@@ -541,6 +601,35 @@ subtest 'paragraph line with inline EP is left alone' => sub {
   is $pt->tidy( $in ), $expected, 'inline EP content line is not reformatted';
 };
 
+subtest
+'percent code lines normalize space after percent and indent as block content'
+    => sub {
+  my $in = join "\n",
+      "<tbody>",
+      "% for my \$r (\@\$rows) {",
+      "%   \$r = {} if ref(\$r) ne 'HASH';",
+      "%   my \$name = \$r->{name} // '';",
+      "<tr>",
+      "</tr>",
+      "% }",
+      "</tbody>",
+      "";
+
+  my $expected = join "\n",
+      "<tbody>",
+      "  % for my \$r (\@\$rows) {",
+      "    % \$r = {} if ref(\$r) ne 'HASH';",
+      "    % my \$name = \$r->{name} // '';",
+      "    <tr>",
+      "    </tr>",
+      "  % }",
+      "</tbody>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'percent lines use a single space after percent';
+    };
+
 subtest 'percent directive lines are left structurally alone' => sub {
   my $in = "% if (\$ok) {\n<div>\n<p>Hello</p>\n</div>\n% }\n";
 
@@ -666,14 +755,31 @@ subtest 'separator text line inside EP block is indented as plain text' => sub {
       'plain separator text follows EP indentation level';
 };
 
-subtest 'style block indented, interior lines left structurally alone' => sub {
+subtest 'single-line css rule stays alone inside style block' => sub {
+  my $in = join "\n",
+      "<style>",
+      '@keyframes qbtl-spin { to { transform: rotate(360deg); } }',
+      "</style>",
+      "";
+
+  my $expected = join "\n",
+      "<style>",
+      '  @keyframes qbtl-spin { to { transform: rotate(360deg); } }',
+      "</style>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'single-line css rule remains unchanged apart from block indent';
+};
+
+subtest 'style block applies simple brace-aware indentation' => sub {
   my $in = "<div>\n<style>\n.foo {\ncolor: red;\n}\n</style>\n</div>\n";
 
   my $expected = join "\n",
       "<div>",
       "  <style>",
       "    .foo {",
-      "    color: red;",
+      "      color: red;",
       "    }",
       "  </style>",
       "</div>",
@@ -683,7 +789,7 @@ subtest 'style block indented, interior lines left structurally alone' => sub {
       'style wrapper lines indent, style body is left alone';
 };
 
-subtest 'style block interior lines get one local indent level' => sub {
+subtest 'style block with css braces indents inner declarations' => sub {
   my $in = join "\n",
       "<style>",
       ".qbtl-spinner {",
@@ -696,8 +802,8 @@ subtest 'style block interior lines get one local indent level' => sub {
   my $expected = join "\n",
       "<style>",
       "  .qbtl-spinner {",
-      "  display: inline-block;",
-      "  width: 14px;",
+      "    display: inline-block;",
+      "    width: 14px;",
       "  }",
       "</style>",
       "";
@@ -715,7 +821,7 @@ subtest 'style block near EP lines keeps EP safe and indents body' => sub {
       "  <%= \$title %>",
       "  <style>",
       "    .foo {",
-      "    color: red;",
+      "      color: red;",
       "    }",
       "  </style>",
       "</div>",
@@ -733,7 +839,7 @@ subtest 'style block with inline attributes keeps body indented' => sub {
       "<div>",
       "  <style media=\"screen\">",
       "    .foo {",
-      "    color: red;",
+      "      color: red;",
       "    }",
       "  </style>",
       "</div>",
@@ -741,6 +847,29 @@ subtest 'style block with inline attributes keeps body indented' => sub {
 
   is $pt->tidy( $in ), $expected,
       'style block with attributes is treated as a protected block';
+};
+
+subtest 'style block with simple braces gets inner indent' => sub {
+  my $in = join "\n",
+      "<style>",
+      ".qbtl-spinner {",
+      "display: inline-block;",
+      "width: 14px;",
+      "}",
+      "</style>",
+      "";
+
+  my $expected = join "\n",
+      "<style>",
+      "  .qbtl-spinner {",
+      "    display: inline-block;",
+      "    width: 14px;",
+      "  }",
+      "</style>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'style block applies simple inner brace indentation';
 };
 
 subtest 'td action block stays aligned across EP branch' => sub {
