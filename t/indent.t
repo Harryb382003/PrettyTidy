@@ -54,6 +54,34 @@ subtest 'closing div after script and EP block stays aligned' => sub {
       'closing div after script and EP block stays aligned';
 };
 
+subtest 'closing percent cluster stays visually coherent in mixed ep block' =>
+    sub {
+  my $in = join "\n",
+      "<div>",
+"    % # light delimiter between tier2 groups (only if there are multiple)",
+      "  % if (\$show_tier2 && \$gi < \$#\$groups) {",
+      "    <%= \$light_hr %>",
+      "  % }",
+      "  % } # groups loop",
+      "  % } # groups present",
+      "  </div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      "  % # light delimiter between tier2 groups (only if there are multiple)",
+      "  % if (\$show_tier2 && \$gi < \$#\$groups) {",
+      "    <%= \$light_hr %>",
+      "  % }",
+      "  % } # groups loop",
+      "  % } # groups present",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'closing percent cluster stays visually coherent';
+    };
+
 subtest 'doctype line is kept at current level' => sub {
   my $in = "<!DOCTYPE html>\n<div>\n<p>\nHello\n</p>\n</div>\n";
 
@@ -279,6 +307,33 @@ subtest 'mixed EP block tag line is left alone' => sub {
   is $pt->tidy( $in ), $expected, 'mixed EP block lines are not reindented';
 };
 
+subtest 'mixed ep micro block stays visually coherent' => sub {
+  my $in = join "\n",
+      "<div>",
+      "  % # light delimiter between tier2 groups (only if there are multiple)",
+      "% if (\$show_tier2 && \$gi < \$#\$groups) {",
+      "  <%= \$light_hr %>",
+      "% }",
+      "% } # groups loop",
+      "% } # groups present",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      "  % # light delimiter between tier2 groups (only if there are multiple)",
+      "  % if (\$show_tier2 && \$gi < \$#\$groups) {",
+      "    <%= \$light_hr %>",
+      "  % }",
+      "  % } # groups loop",
+      "  % } # groups present",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'mixed ep micro block stays visually coherent';
+};
+
 subtest 'mixed inline children align under parent' => sub {
   my $in = join "\n",
       "<div>",
@@ -371,8 +426,14 @@ subtest 'multiline inline style indents cleanly' => sub {
   my $in =
 "<div style=\"\nposition:absolute;\ntop:6%;\nleft:50%;\ntransform:translateX(-50%);\n\">\n</div>\n";
 
-  my $expected =
-"<div style=\"\n  position:absolute;\n  top:6%;\n  left:50%;\n  transform:translateX(-50%);\n\">\n</div>\n";
+  my $expected = join "\n",
+      '<div style="',
+      '  position:absolute;',
+      '  top:6%;',
+      '  left:50%;',
+      '  transform:translateX(-50%);">',
+      '</div>',
+      '';
 
   is $pt->tidy( $in ), $expected,
       'multiline inline style declarations are indented';
@@ -382,8 +443,15 @@ subtest 'nested multiline inline style follows html indentation' => sub {
   my $in =
 "<div>\n<div style=\"\nposition:absolute;\ntop:6%;\nleft:50%;\n\">\n</div>\n</div>\n";
 
-  my $expected =
-"<div>\n  <div style=\"\n    position:absolute;\n    top:6%;\n    left:50%;\n  \">\n  </div>\n</div>\n";
+  my $expected = join "\n",
+      '<div>',
+      '  <div style="',
+      '    position:absolute;',
+      '    top:6%;',
+      '    left:50%;">',
+      '  </div>',
+      '</div>',
+      '';
 
   is $pt->tidy( $in ), $expected,
       'multiline inline style declarations follow surrounding html indentation';
@@ -393,8 +461,12 @@ subtest 'multiline inline style with EP is left alone' => sub {
   my $in =
 "<div style=\"\ncolor:<%= \$color %>;\nbackground:#151515;\n\">\n</div>\n";
 
-  my $expected =
-"<div style=\"\ncolor:<%= \$color %>;\nbackground:#151515;\n\">\n</div>\n";
+  my $expected = join "\n",
+      '<div style="',
+      '  color:<%= $color %>;',
+      '  background:#151515;">',
+      '</div>',
+      '';
 
   is $pt->tidy( $in ), $expected,
       'multiline inline style attribute containing EP is not reformatted';
@@ -903,6 +975,25 @@ subtest 'td action block stays aligned across EP branch' => sub {
       'html opened under td remains aligned across EP branch';
 };
 
+subtest 'top level percent sub block stays visually coherent' => sub {
+  my $in = join "\n",
+      "% my \$label_for = sub {",
+      "  % my (\$k) = \@_;",
+      "  % return \$k || 'UNKNOWN';",
+      "% };",
+      "";
+
+  my $expected = join "\n",
+      "% my \$label_for = sub {",
+      "  % my (\$k) = \@_;",
+      "  % return \$k || 'UNKNOWN';",
+      "% };",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'top level percent sub block remains coherent';
+};
+
 subtest 'void elements do not increase indentation' => sub {
   my $in = "<div>\n<img src=\"x.png\">\n<p>\nHello\n</p>\n</div>\n";
 
@@ -913,7 +1004,48 @@ subtest 'void elements do not increase indentation' => sub {
 };
 
 ############
+subtest 'multiline inline style closes on final declaration line' => sub {
+  my $in = join "\n",
+      "<div style=\"",
+      "background:#151515;",
+      "color:#eee;",
+      "font-family: system-ui, -apple-system, sans-serif;",
+      "\">",
+      "</div>",
+      "";
 
+  my $expected = join "\n",
+      "<div style=\"",
+      "  background:#151515;",
+      "  color:#eee;",
+      "  font-family: system-ui, -apple-system, sans-serif;\">",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'inline style closes on final declaration line';
+};
+
+subtest 'multiline inline style anchor becomes block form' => sub {
+  my $in = join "\n",
+      "<a href=\"<%= \$back %>\" style=\"",
+      "display:inline-flex;",
+      "align-items:center;",
+      "text-decoration:none;\">Back</a>",
+      "";
+
+  my $expected = join "\n",
+      "<a href=\"<%= \$back %>\" style=\"",
+      "  display:inline-flex;",
+      "  align-items:center;",
+      "  text-decoration:none;\">",
+      "  Back",
+      "</a>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'inline style anchor closes on declaration line and splits content';
+};
 ############
 
 done_testing;

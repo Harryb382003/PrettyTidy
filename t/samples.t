@@ -28,8 +28,8 @@ ok defined $output,   'tidy returned output';
 ok length( $output ), 'output is not empty';
 like $output, qr/\n\z/, 'output ends with a newline';
 
-my $in_pct_lines  = () = $input  =~ /^%/mg;
-my $out_pct_lines = () = $output =~ /^%/mg;
+my $in_pct_lines  = () = $input  =~ /^\s*%/mg;
+my $out_pct_lines = () = $output =~ /^\s*%/mg;
 is $out_pct_lines, $in_pct_lines, 'percent directive line count preserved';
 
 my $in_ep_tags  = () = $input  =~ /<%[=%]?/g;

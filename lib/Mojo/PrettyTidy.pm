@@ -16,16 +16,16 @@ sub new ( $class, %args ) {
 }
 
 sub tidy ( $self, $input ) {
-  $input = '' unless defined $input;
+  my $text = defined $input ? $input : '';
 
-  my $output = $input;
+  $text = $self->_normalize_line_endings( $text );
+  $text = $self->_strip_trailing_whitespace( $text );
+  $text = $self->_apply_basic_indentation( $text );
+  $text = $self->_cohere_percent_clusters( $text );
+  $text = $self->_cohere_mixed_ep_micro_blocks( $text );
+  $text = $self->_ensure_final_newline( $text );
 
-  $output = $self->_normalize_line_endings( $output );
-  $output = $self->_strip_trailing_whitespace( $output );
-  $output = $self->_apply_basic_indentation( $output );
-  $output = $self->_ensure_final_newline( $output );
-
-  return $output;
+  return $text;
 }
 
 sub check ( $self, $input ) {
@@ -98,6 +98,21 @@ sub _apply_basic_indentation ( $self, $text ) {
       next;
     }
 
+    if ( _is_inline_style_start_line( $trimmed ) ) {
+      my $tag = _inline_style_tag_name( $trimmed );
+
+      $in_inline_style_block = 1;
+      $inline_style_base     = $level + $ep_level;
+      @inline_style_lines    = ( $line );
+
+      if ( defined $tag
+           && !_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+      {
+        $level++;
+      }
+
+      next;
+    }
     if ( _is_html_line_with_ep( $trimmed ) ) {
       push @out,
           ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
@@ -193,22 +208,6 @@ sub _apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    if ( _is_inline_style_start_line( $trimmed ) ) {
-      my $tag = _inline_style_tag_name( $trimmed );
-
-      $in_inline_style_block = 1;
-      $inline_style_base     = $level + $ep_level;
-      @inline_style_lines    = ( $line );
-
-      if ( defined $tag
-           && !_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-      {
-        $level++;
-      }
-
-      next;
-    }
-
     if ( _is_html_comment_start_line( $trimmed ) ) {
       push @out,
           ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
@@ -298,19 +297,108 @@ sub _apply_basic_indentation ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _ep_closes_before ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*%\s*}/ ? 1 : 0;
+sub _cohere_mixed_ep_micro_blocks ( $self, $text ) {
+  my @lines = split /\n/, $text, -1;
+  my @out;
+  my $i = 0;
+
+  while ( $i <= $#lines ) {
+    my $line = $lines[$i];
+
+    unless ( _is_percent_line( $line ) || _is_ep_output_line( $line ) ) {
+      push @out, $line;
+      $i++;
+      next;
+    }
+
+    my @block;
+
+    while ( $i <= $#lines ) {
+      my $cur = $lines[$i];
+      last unless _is_percent_line( $cur ) || _is_ep_output_line( $cur );
+      push @block, $cur;
+      $i++;
+    }
+
+    my $has_controlish = grep { _is_percent_controlish_line( $_ ) } @block;
+    my $has_ep_output  = grep { _is_ep_output_line( $_ ) } @block;
+    my $has_closer     = grep { _is_percent_closer_line( $_ ) } @block;
+
+    if ( $has_controlish && $has_ep_output && $has_closer ) {
+      my $target;
+      for my $l ( @block ) {
+        next unless _is_percent_line( $l );
+        $target = _percent_indent( $l );
+        last;
+      }
+      $target //= 0;
+
+      for my $l ( @block ) {
+        if ( _is_percent_line( $l ) ) {
+          $l =~ s/^\s*(%.*)$/' ' x $target . $1/e;
+          push @out, $l;
+        }
+        elsif ( _is_ep_output_line( $l ) ) {
+          my $trim = $l;
+          $trim =~ s/^\s+//;
+          push @out, ( ' ' x ( $target + $self->{indent_width} ) ) . $trim;
+        }
+        else {
+          push @out, $l;
+        }
+      }
+    }
+    else {
+      push @out, @block;
+    }
+  }
+
+  return join "\n", @out;
 }
 
-sub _is_ep_control_line ( $line ) {
-  return 0 unless defined $line;
-  return 0 unless $line =~ /^\s*%/;
+sub _cohere_percent_clusters ( $self, $text ) {
+  my @lines = split /\n/, $text, -1;
+  my @out;
+  my $i = 0;
 
-  return 1 if $line =~ /^\s*%\s*}/;
-  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
+  while ( $i <= $#lines ) {
+    if ( !_is_percent_line( $lines[$i] ) ) {
+      push @out, $lines[ $i++ ];
+      next;
+    }
 
-  return 0;
+    my @cluster;
+
+    while ( $i <= $#lines && _is_percent_line( $lines[$i] ) ) {
+      push @cluster, $lines[$i];
+      $i++;
+    }
+
+    my $has_controlish = grep { _is_percent_controlish_line( $_ ) } @cluster;
+    my $has_closer     = grep { _is_percent_closer_line( $_ ) } @cluster;
+    my $starts_with_sub =
+        @cluster && _is_percent_sub_opener_line( $cluster[0] );
+
+    if ( $has_controlish && $has_closer && !$starts_with_sub ) {
+      my $target;
+      for my $l ( @cluster ) {
+        next unless _is_percent_line( $l );
+        my $n = _percent_indent( $l );
+        $target = $n if !defined( $target ) || $n < $target;
+      }
+      $target //= 0;
+
+      for my $l ( @cluster ) {
+        $l =~ s/^\s*(%.*)$/' ' x $target . $1/e;
+        push @out, $l;
+      }
+    }
+    else {
+      push @out, @cluster;
+    }
+  }
+
+  return join "\n", @out;
 }
 
 sub _effective_ep_indent ( $ep_level ) {
@@ -325,63 +413,110 @@ sub _ensure_final_newline ( $self, $text ) {
   return $text;
 }
 
+sub _ep_closes_before ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*%\s*}/ ? 1 : 0;
+}
+
 sub _ep_opens_after ( $line ) {
   return 0 unless defined $line;
   return $line =~ /^\s*%.*\{\s*$/ ? 1 : 0;
 }
 
 sub _format_inline_style_block ( $self, $lines, $base, $step ) {
-  my $has_ep = grep { _line_contains_ep( $_ ) } @$lines;
-
-  return @$lines if $has_ep;
-
   my @out;
+  return @out unless $lines && @$lines;
 
-  for my $i ( 0 .. $#$lines ) {
-    my $line    = $lines->[$i];
-    my $trimmed = $line;
-    $trimmed =~ s/^\s+//;
-    $trimmed =~ s/\s+$//;
+  my @trimmed = map {
+    my $x = $_;
+    $x =~ s/^\s+//;
+    $x =~ s/\s+$//;
+    $x;
+  } @$lines;
 
-    if ( $i == 0 ) {
-      push @out, ( $step x $base ) . $trimmed;
-      next;
+  return ( ( $step x $base ) . $trimmed[0] ) if @trimmed == 1;
+
+  my $last = pop @trimmed;
+  my ( $kind, $style_close, $content, $closing_tag ) =
+      _split_inline_style_tail( $last );
+
+  # opener
+  push @out, ( $step x $base ) . shift @trimmed;
+
+  # middle declaration lines
+  for my $line ( @trimmed ) {
+    push @out, ( $step x ( $base + 1 ) ) . $line;
+  }
+
+  # fallback
+  if ( !defined $kind ) {
+    push @out, ( $step x ( $base + 1 ) ) . $last;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_only' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
     }
-
-    if ( $i == $#$lines ) {
-      my @tail = _split_inline_style_tail( $trimmed );
-
-      if ( @tail ) {
-        my ( $style_close, $content, $closing_tag ) = @tail;
-
-        push @out, ( $step x ( $base + 1 ) ) . $style_close;
-        push @out, ( $step x ( $base + 1 ) ) . $content
-            if defined $content && length $content;
-        push @out, ( $step x $base ) . $closing_tag
-            if defined $closing_tag && length $closing_tag;
-
-        next;
-      }
-
-      if ( $trimmed =~ /^\s*">\s*$/ ) {
-        push @out, ( $step x $base ) . $trimmed;
-        next;
-      }
-
-      push @out, ( $step x ( $base + 1 ) ) . $trimmed;
-      next;
+    else {
+      push @out, ( $step x $base ) . $style_close;
     }
+    return @out;
+  }
 
-    push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+  if ( $kind eq 'style_close_on_declaration' ) {
+    push @out, ( $step x ( $base + 1 ) ) . $style_close;
+    return @out;
+  }
+
+  if ( $kind eq 'closing_tag_only' ) {
+    push @out, ( $step x ( $base + 1 ) ) . $style_close;
+    push @out, ( $step x $base ) . $closing_tag if defined $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'text_and_closing_tag' ) {
+    push @out, ( $step x ( $base + 1 ) ) . $style_close;
+    push @out, ( $step x ( $base + 1 ) ) . $content
+        if defined $content && length $content;
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_closing_tag' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x $base ) . $style_close;
+    }
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_text_and_closing_tag' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x $base ) . $style_close;
+    }
+    push @out, ( $step x ( $base + 1 ) ) . $content
+        if defined $content && length $content;
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
   }
 
   return @out;
 }
 
 sub _inline_style_tag_name ( $line ) {
-  return $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*\bstyle="\s*$/
-      ? $1
-      : undef;
+  return unless defined $line;
+  my ( $tag ) = $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
+  return $tag;
 }
 
 sub _inline_style_tail_has_closing_tag ( $line ) {
@@ -391,6 +526,21 @@ sub _inline_style_tail_has_closing_tag ( $line ) {
 
 sub _is_doctype_line ( $line ) {
   return $line =~ /^\s*<!DOCTYPE\b/i ? 1 : 0;
+}
+
+sub _is_ep_control_line ( $line ) {
+  return 0 unless defined $line;
+  return 0 unless $line =~ /^\s*%/;
+
+  return 1 if $line =~ /^\s*%\s*}/;
+  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
+
+  return 0;
+}
+
+sub _is_ep_output_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*<%=[\s\S]*%>\s*$/ ? 1 : 0;
 }
 
 sub _is_html_comment_line ( $line ) {
@@ -414,16 +564,23 @@ sub _is_html_line_with_ep ( $line ) {
 }
 
 sub _is_inline_style_start_line ( $line ) {
-  return $line =~ /^\s*<[^>]+\bstyle="\s*$/ ? 1 : 0;
+  return 0 unless defined $line;
+  return $line =~ /^\s*<[A-Za-z][A-Za-z0-9:_-]*\b.*\bstyle="\s*$/ ? 1 : 0;
 }
 
 sub _is_inline_style_end_line ( $line ) {
   return 0 unless defined $line;
-  return $line =~ /">\s*(?:.*)?$/ ? 1 : 0;
+  return $line =~ /">\s*$/ || $line =~ /">.*$/;
 }
 
 sub _is_inline_style_closing_only_line ( $line ) {
   return $line =~ /^\s*">\s*$/ ? 1 : 0;
+}
+
+sub _line_indent ( $line ) {
+  return 0 unless defined $line;
+  $line =~ /^(\s*)/;
+  return length( $1 // '' );
 }
 
 sub _is_mixed_inline_html_line ( $line ) {
@@ -453,6 +610,32 @@ sub _is_plain_text_line ( $line ) {
   return 0 if _line_contains_ep( $line );
   return 0 if $line =~ /</;
   return 1;
+}
+
+sub _is_percent_closer_line ( $line ) {
+  return defined $line && $line =~ /^\s*%\s*}/ ? 1 : 0;
+}
+
+sub _is_percent_comment_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*%\s*#/ ? 1 : 0;
+}
+
+sub _is_percent_controlish_line ( $line ) {
+  return 0 unless defined $line;
+  return 1 if $line =~ /^\s*%\s*#/;
+  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
+  return 1 if $line =~ /^\s*%\s*}/;
+  return 0;
+}
+
+sub _is_percent_sub_opener_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*%\s*.*\bsub\s*\{\s*$/ ? 1 : 0;
+}
+
+sub _is_percent_line ( $line ) {
+  return defined $line && $line =~ /^\s*%/ ? 1 : 0;
 }
 
 sub _is_pure_opening_tag_line ( $line ) {
@@ -529,15 +712,47 @@ sub _normalize_percent_line ( $line ) {
   return $line;
 }
 
+sub _percent_indent ( $line ) {
+  return 0 unless defined $line;
+  $line =~ /^(\s*)%/;
+  return defined $1 ? length( $1 ) : 0;
+}
+
 sub _split_inline_style_tail ( $line ) {
   return unless defined $line;
 
-  if ( $line =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( $1, $2, $3 );
+  my $trimmed = $line;
+  $trimmed =~ s/^\s+//;
+  $trimmed =~ s/\s+$//;
+
+  # final declaration + close + text + closing tag
+  if ( $trimmed =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'text_and_closing_tag', $1, $2, $3 );
   }
 
-  if ( $line =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( $1, undef, $2 );
+  # final declaration + close + closing tag
+  if ( $trimmed =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'closing_tag_only', $1, undef, $2 );
+  }
+
+  # bare close + text + closing tag
+  if ( $trimmed =~ /^">([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'bare_close_text_and_closing_tag', '">', $1, $2 );
+  }
+
+  # bare close + closing tag
+  if ( $trimmed =~ /^">(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'bare_close_closing_tag', '">', undef, $1 );
+  }
+
+  # final declaration already ends with ">
+  if ( $trimmed =~ /^(.*;">)\s*$/ ) {
+    return ( 'style_close_on_declaration', $1, undef, undef );
+  }
+
+  # bare dangling close-only line
+  if ( $trimmed =~ /^">\s*$/ ) {
+    return ( 'bare_close_only', '">', undef, undef );
   }
 
   return;
@@ -549,6 +764,11 @@ sub _strip_trailing_whitespace ( $self, $text ) {
   $text =~ s/[ \t]+$//mg;
 
   return $text;
+}
+
+sub _is_percent_sub_opener_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*%\s*.*\bsub\s*\{\s*$/ ? 1 : 0;
 }
 
 1;
