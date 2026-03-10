@@ -143,16 +143,30 @@ sub _apply_basic_indentation ( $self, $text ) {
     }
 
     if ( $in_script_block ) {
-      push @out,
-          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
-      $in_script_block = 0 if _is_script_end_line( $trimmed );
+      my $base = $level + _effective_ep_indent( $ep_level );
+
+      if ( _is_script_end_line( $trimmed ) ) {
+        push @out, ( $step x $base ) . $trimmed;
+        $in_script_block = 0;
+      }
+      else {
+        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+      }
+
       next;
     }
 
     if ( $in_style_block ) {
-      push @out,
-          ( $step x ( $level + _effective_ep_indent( $ep_level ) ) ) . $trimmed;
-      $in_style_block = 0 if _is_style_end_line( $trimmed );
+      my $base = $level + _effective_ep_indent( $ep_level );
+
+      if ( _is_style_end_line( $trimmed ) ) {
+        push @out, ( $step x $base ) . $trimmed;
+        $in_style_block = 0;
+      }
+      else {
+        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+      }
+
       next;
     }
 

@@ -112,7 +112,8 @@ if ( $stdin ) {
   exit 0;
 }
 
-pod2usage( "No input file provided\n" ) unless @inputs;
+pod2usage( "No input provided. Supply a file, directory, or --stdin.\n" )
+    unless @inputs;
 
 pod2usage( "--output cannot be combined with multiple inputs\n" )
     if $output_path && @inputs > 1;
@@ -281,13 +282,13 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
+    mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
     mojo-prettytidy --write file.html.ep
     mojo-prettytidy --write --backup file.html.ep
     mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
-    mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
     mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
     mojo-prettytidy templates --prefix pt. --outdir parsed

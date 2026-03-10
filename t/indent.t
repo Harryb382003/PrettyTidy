@@ -16,7 +16,7 @@ subtest 'anchor line with inline text is left alone' => sub {
   is $pt->tidy( $in ), $expected, 'inline anchor content is not reformatted';
 };
 
-subtest 'attribute-level EP line keeps structure but inherits outer indent' =>
+subtest 'attribute-level EP line keeps structure, inherits outer indent' =>
     sub {
   my $in = "<div>\n<a href=\"<%= \$url %>\">Link</a>\n</div>\n";
 
@@ -42,9 +42,9 @@ subtest 'closing div after script and EP block stays aligned' => sub {
       "<div>",
       "  % if (\$show) {",
       "    <script>",
-      "    function x() {",
-      "    return 1;",
-      "    }",
+      "      function x() {",
+      "      return 1;",
+      "      }",
       "    </script>",
       "  % }",
       "</div>",
@@ -126,8 +126,7 @@ subtest 'ep wrapper keeps opening and closing html aligned' => sub {
       'opening and closing tags stay aligned inside EP block';
 };
 
-subtest 'ep wrapper with inner branch keeps plain text and links aligned' =>
-    sub {
+subtest 'ep wrapper with inner branch keeps plain text, links aligned' => sub {
   my $in = join "\n",
       "% if (\$pages > 1) {",
       "<div>",
@@ -158,7 +157,7 @@ subtest 'ep wrapper with inner branch keeps plain text and links aligned' =>
 
   is $pt->tidy( $in ), $expected,
       'plain text inside nested EP branch follows surrounding html depth';
-    };
+};
 
 subtest 'for-loop row block uses local readable indentation' => sub {
   my $in = join "\n",
@@ -443,9 +442,9 @@ subtest 'nested div after script block closes cleanly' => sub {
       "  <div>",
       "    % if (\$show) {",
       "      <script>",
-      "      function x() {",
-      "      return 1;",
-      "      }",
+      "        function x() {",
+      "        return 1;",
+      "        }",
       "      </script>",
       "    % }",
       "  </div>",
@@ -590,21 +589,72 @@ subtest 'script block indented, interior lines left structurally alone' => sub {
       "<div>\n<script>\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
 
   my $expected =
-"<div>\n  <script>\n  if (x < 10) {\n  console.log(x);\n  }\n  </script>\n</div>\n";
+"<div>\n  <script>\n    if (x < 10) {\n    console.log(x);\n    }\n  </script>\n</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'script wrapper lines indent, script body is left alone';
+};
+
+subtest 'script block interior lines get one local indent level' => sub {
+  my $in = join "\n",
+      "<script>",
+      "(function () {",
+      "function poll() {",
+      "poll();",
+      "}",
+      "})();",
+      "</script>",
+      "";
+
+  my $expected = join "\n",
+      "<script>",
+      "  (function () {",
+      "  function poll() {",
+      "  poll();",
+      "  }",
+      "  })();",
+      "</script>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'script interior lines are indented one local level';
 };
 
 subtest 'script block near EP lines keeps EP safe' => sub {
   my $in =
 "<div>\n<%= \$title %>\n<script>\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
 
-  my $expected =
-"<div>\n  <%= \$title %>\n  <script>\n  if (x < 10) {\n  console.log(x);\n  }\n  </script>\n</div>\n";
+  my $expected = join "\n",
+      "<div>",
+      "  <%= \$title %>",
+      "  <script>",
+      "    if (x < 10) {",
+      "    console.log(x);",
+      "    }",
+      "  </script>",
+      "</div>",
+      "";
 
   is $pt->tidy( $in ), $expected,
       'script block indents normally while EP line stays untouched';
+};
+
+subtest 'script block with inline attributes is handled safely' => sub {
+  my $in =
+"<div>\n<script type=\"text/javascript\">\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
+
+  my $expected = join "\n",
+      "<div>",
+      "  <script type=\"text/javascript\">",
+      "    if (x < 10) {",
+      "    console.log(x);",
+      "    }",
+      "  </script>",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'script block with attributes is treated as a protected block';
 };
 
 subtest 'separator text line inside EP block is indented as plain text' => sub {
@@ -616,43 +666,78 @@ subtest 'separator text line inside EP block is indented as plain text' => sub {
       'plain separator text follows EP indentation level';
 };
 
-subtest 'script block with inline attributes is handled safely' => sub {
-  my $in =
-"<div>\n<script type=\"text/javascript\">\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
-
-  my $expected =
-"<div>\n  <script type=\"text/javascript\">\n  if (x < 10) {\n  console.log(x);\n  }\n  </script>\n</div>\n";
-
-  is $pt->tidy( $in ), $expected,
-      'script block with attributes is treated as a protected block';
-};
-
 subtest 'style block indented, interior lines left structurally alone' => sub {
   my $in = "<div>\n<style>\n.foo {\ncolor: red;\n}\n</style>\n</div>\n";
 
-  my $expected =
-      "<div>\n  <style>\n  .foo {\n  color: red;\n  }\n  </style>\n</div>\n";
+  my $expected = join "\n",
+      "<div>",
+      "  <style>",
+      "    .foo {",
+      "    color: red;",
+      "    }",
+      "  </style>",
+      "</div>",
+      "";
 
   is $pt->tidy( $in ), $expected,
       'style wrapper lines indent, style body is left alone';
 };
 
-subtest 'style block near EP lines keeps EP safe' => sub {
+subtest 'style block interior lines get one local indent level' => sub {
+  my $in = join "\n",
+      "<style>",
+      ".qbtl-spinner {",
+      "display: inline-block;",
+      "width: 14px;",
+      "}",
+      "</style>",
+      "";
+
+  my $expected = join "\n",
+      "<style>",
+      "  .qbtl-spinner {",
+      "  display: inline-block;",
+      "  width: 14px;",
+      "  }",
+      "</style>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'style interior lines are indented one local level';
+};
+
+subtest 'style block near EP lines keeps EP safe and indents body' => sub {
   my $in =
 "<div>\n<%= \$title %>\n<style>\n.foo {\ncolor: red;\n}\n</style>\n</div>\n";
 
-  my $expected =
-"<div>\n  <%= \$title %>\n  <style>\n  .foo {\n  color: red;\n  }\n  </style>\n</div>\n";
+  my $expected = join "\n",
+      "<div>",
+      "  <%= \$title %>",
+      "  <style>",
+      "    .foo {",
+      "    color: red;",
+      "    }",
+      "  </style>",
+      "</div>",
+      "";
+
   is $pt->tidy( $in ), $expected,
       'style block indents normally while EP line stays untouched';
 };
 
-subtest 'style block with inline attributes is handled safely' => sub {
+subtest 'style block with inline attributes keeps body indented' => sub {
   my $in =
 "<div>\n<style media=\"screen\">\n.foo {\ncolor: red;\n}\n</style>\n</div>\n";
 
-  my $expected =
-"<div>\n  <style media=\"screen\">\n  .foo {\n  color: red;\n  }\n  </style>\n</div>\n";
+  my $expected = join "\n",
+      "<div>",
+      "  <style media=\"screen\">",
+      "    .foo {",
+      "    color: red;",
+      "    }",
+      "  </style>",
+      "</div>",
+      "";
 
   is $pt->tidy( $in ), $expected,
       'style block with attributes is treated as a protected block';
