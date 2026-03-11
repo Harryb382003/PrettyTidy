@@ -20,6 +20,7 @@ my $backup_ext     = '.bak';
 my $check          = 0;
 my $cli_outdir_set = 0;
 my $cli_prefix_set = 0;
+my $columns        = 0;
 my $config_path    = '';
 my $diff           = 0;
 my $help           = 0;
@@ -33,14 +34,15 @@ my $write          = 0;
 
 GetOptions(
 
-  'backup'       => \$backup,
-  'backup-ext=s' => \$backup_ext,
-  'check|c'      => \$check,
-  'config=s'     => \$config_path,
-  'diff'         => \$diff,
-  'help|h'       => \$help,
-  'man'          => \$man,
-  'output|o=s'   => \$output_path,
+  'backup'         => \$backup,
+  'backup-ext=s'   => \$backup_ext,
+  'check|c'        => \$check,
+  'columns|cols=i' => \$columns,
+  'config=s'       => \$config_path,
+  'diff'           => \$diff,
+  'help|h'         => \$help,
+  'man'            => \$man,
+  'output|o=s'     => \$output_path,
   'outdir=s'     => sub ( $opt, $val ) { $outdir = $val; $cli_outdir_set = 1; },
   'prefix|pre=s' => sub ( $opt, $val ) { $prefix = $val; $cli_prefix_set = 1; },
   'stdin'        => \$stdin,
@@ -118,7 +120,7 @@ pod2usage( "--stdin cannot be combined with --backup\n" )
 pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
     if $stdin && @inputs;
 
-my $pt = Mojo::PrettyTidy->new;
+my $pt = Mojo::PrettyTidy->new( ( $columns ? ( columns => $columns ) : () ), );
 
 if ( $stdin ) {
   my $input  = do { local $/; <STDIN> };

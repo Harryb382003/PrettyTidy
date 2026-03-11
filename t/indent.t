@@ -82,6 +82,79 @@ subtest 'closing percent cluster stays visually coherent in mixed ep block' =>
       'closing percent cluster stays visually coherent';
     };
 
+subtest 'columns expands simple nested tag line vertically' => sub {
+  my $pt = Mojo::PrettyTidy->new(
+                                  indent_width => 2,
+                                  tab_width    => 2,
+                                  columns      => 20, );
+
+  my $in = "<td><code><%= \$t->{ih} %></code></td>\n";
+
+  my $expected = join "\n",
+      "<td>",
+      "  <code>",
+      "    <%= \$t->{ih} %>",
+      "  </code>",
+      "</td>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'long simple nested tag line expands vertically';
+};
+
+subtest 'columns expands long indented one-line opening tag with style into
+multiline style form' => sub {
+  my $pt = Mojo::PrettyTidy->new(
+                                  indent_width => 2,
+                                  tab_width    => 2,
+                                  columns      => 40, );
+
+  my $in = join '',
+      '  <div class="qbtl-actions" style="display:flex; flex-wrap:wrap; ',
+      'gap:6px; align-items:center;">',
+      "\n";
+
+  my $expected = join "\n",
+      '<div class="qbtl-actions" style="',
+      '    display:flex;',
+      '    flex-wrap:wrap;',
+      '    gap:6px;',
+      '    align-items:center;">',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+      'long indented opening tag paginates at style attribute';
+};
+
+subtest
+    'columns expands long nested html comment into multiline comment block' =>
+    sub {
+
+  local $TODO = 'not yet implemented';
+
+  my $pt = Mojo::PrettyTidy->new(
+                                  indent_width => 2,
+                                  tab_width    => 2,
+                                  columns      => 40, );
+
+  my $comment =
+        '  <!-- this is a long comment that should '
+      . 'become a multiline comment block -->';
+
+  my $in = join "\n", "<div>", $comment, "</div>", "";
+
+  my $expected = join "\n",
+      "<div>",
+      "  <!--",
+      "  this is a long comment that should become a multiline comment block",
+      "  -->",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'long nested html comment expands into multiline comment block';
+    };
+
 subtest 'doctype line is kept at current level' => sub {
   my $in = "<!DOCTYPE html>\n<div>\n<p>\nHello\n</p>\n</div>\n";
 
@@ -105,12 +178,18 @@ subtest 'embedded percent code lines align with sibling form content' => sub {
 
   my $expected = join "\n",
       "<form>",
-      "  <input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "  <input type=\"hidden\"",
+      "    name=\"confirm\"",
+      "    value=\"1\">",
       "  % my \$return_to = '/';",
       "  % my \$qs = '';",
       "  % \$return_to .= \"?\$qs\" if length \$qs;",
-"  <input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
-      "  <button type=\"submit\">Add</button>",
+      "  <input type=\"hidden\"",
+      "    name=\"return_to\"",
+      "    value=\"<%= \$return_to %>\">",
+      "  <button type=\"submit\">",
+      "    Add",
+      "  </button>",
       "</form>",
       "";
 
@@ -132,12 +211,18 @@ subtest 'embedded percent code lines indent locally inside html block' => sub {
 
   my $expected = join "\n",
       "<form>",
-      "  <input type=\"hidden\" name=\"confirm\" value=\"1\">",
+      "  <input type=\"hidden\"",
+      "    name=\"confirm\"",
+      "    value=\"1\">",
       "  % my \$return_to = '/';",
       "  % my \$qs = '';",
       "  % \$return_to .= \"?\$qs\" if length \$qs;",
-"  <input type=\"hidden\" name=\"return_to\" value=\"<%= \$return_to %>\">",
-      "  <button type=\"submit\">Add</button>",
+      "  <input type=\"hidden\"",
+      "    name=\"return_to\"",
+      "    value=\"<%= \$return_to %>\">",
+      "  <button type=\"submit\">",
+      "    Add",
+      "  </button>",
       "</form>",
       "";
 
@@ -210,25 +295,30 @@ subtest 'for-loop row block uses local readable indentation' => sub {
       "";
 
   my $expected = join "\n",
-      "% for my \$t (\@\$sample) {",
-      "  <tr>",
-      "    <td><%= \$t->{name} %></td>",
-      "    <td><code><%= \$t->{ih} %></code></td>",
-      "    <td>",
+      '% for my $t (@$sample) {',
+      '  <tr>',
+      '    <td><%= $t->{name} %></td>',
+      '    <td><code><%= $t->{ih} %></code></td>',
+      '    <td>',
       "    % if (stash('dev_mode')) {",
-      "      <div class=\"qbtl-actions\">",
-      "        <form method=\"post\" action=\"/qbt/add_one\">",
-"          <input type=\"hidden\" name=\"ih\" value=\"<%= \$t->{ih} %>\">",
-      "          <button type=\"submit\">Add</button>",
-      "        </form>",
-      "      </div>",
-      "    % } else {",
-      "      <em>dev</em>",
-      "    % }",
-      "    </td>",
-      "  </tr>",
-      "% }",
-      "";
+      '      <div class="qbtl-actions">',
+      '        <form method="post"',
+      '            action="/qbt/add_one">',
+      '          <input type="hidden"',
+      '            name="ih"',
+      '            value="<%= $t->{ih} %>">',
+      '          <button type="submit">',
+      '            Add',
+      '          </button>',
+      '        </form>',
+      '      </div>',
+      '    % } else {',
+      '      <em>dev</em>',
+      '    % }',
+      '    </td>',
+      '  </tr>',
+      '% }',
+      '';
 
   is $pt->tidy( $in ), $expected,
       'html inside for-loop stays readable without excessive rightward drift';
@@ -272,6 +362,68 @@ subtest 'html comment near EP lines is left safe' => sub {
 
   is $pt->tidy( $in ), $expected,
       'comment line indents normally while EP line stays untouched';
+};
+
+subtest 'html root stays neutral while head and body remain top-level' => sub {
+  my $in = join "\n",
+      '<!DOCTYPE html>',
+      '<html>',
+      '<head>',
+      '<title>Hi</title>',
+      '</head>',
+      '<body>',
+      '<h1>Hello</h1>',
+      '</body>',
+      '</html>',
+      '';
+
+  my $expected = join "\n",
+      '<!DOCTYPE html>',
+      '<html>',
+      '<head>',
+      '  <title>Hi</title>',
+      '</head>',
+      '<body>',
+      '  <h1>Hello</h1>',
+      '</body>',
+      '</html>',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+      'html root is neutral and does not indent head/body';
+};
+
+subtest 'html root stays neutral with top-level comment and ep in head' => sub {
+  my $in = join "\n",
+      '<!DOCTYPE html>',
+      '<!-- Request ID: <%= $c->req->request_id %> -->',
+      '<html>',
+      '<head>',
+      '% my $title = "Hi";',
+      '<title><%= $title %></title>',
+      '</head>',
+      '<body>',
+      '<h1>Hello</h1>',
+      '</body>',
+      '</html>',
+      '';
+
+  my $expected = join "\n",
+      '<!DOCTYPE html>',
+      '<!-- Request ID: <%= $c->req->request_id %> -->',
+      '<html>',
+      '<head>',
+      '  % my $title = "Hi";',
+      '  <title><%= $title %></title>',
+      '</head>',
+      '<body>',
+      '  <h1>Hello</h1>',
+      '</body>',
+      '</html>',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+      'html root stays neutral with top-level comment and EP in head';
 };
 
 subtest 'inline EP in html line is left alone' => sub {
@@ -337,18 +489,24 @@ subtest 'mixed ep micro block stays visually coherent' => sub {
 subtest 'mixed inline children align under parent' => sub {
   my $in = join "\n",
       "<div>",
-"<div style=\"margin-top:12px; border-top:1px solid #2a2a2a; padding-top:10px;\">",
-"<div id=\"vmCount\" style=\"font-weight:700; margin-bottom:6px;\">Contents</div>",
-"<ul id=\"vmList\" style=\"margin:0; padding-left:18px; line-height:1.35;\"></ul>",
+      '<div style="margin-top:12px; border-top:1px solid #2a2a2a; '
+      . 'padding-top:10px;">',
+      '  <div id="vmCount" style="font-weight:700; '
+      . 'margin-bottom:6px;">Contents</div>',
+      '  <ul id="vmList" style="margin:0; padding-left:18px; '
+      . 'line-height:1.35;"></ul>',
       "</div>",
       "</div>",
       "";
 
   my $expected = join "\n",
       "<div>",
-"  <div style=\"margin-top:12px; border-top:1px solid #2a2a2a; padding-top:10px;\">",
-"    <div id=\"vmCount\" style=\"font-weight:700; margin-bottom:6px;\">Contents</div>",
-"    <ul id=\"vmList\" style=\"margin:0; padding-left:18px; line-height:1.35;\"></ul>",
+      '  <div style="margin-top:12px; border-top:1px solid #2a2a2a; '
+      . 'padding-top:10px;">',
+      '    <div id="vmCount" style="font-weight:700; '
+      . 'margin-bottom:6px;">Contents</div>',
+      '    <ul id="vmList" style="margin:0; padding-left:18px; '
+      . 'line-height:1.35;"></ul>',
       "  </div>",
       "</div>",
       "";
@@ -413,10 +571,25 @@ subtest 'multiline html comment block is indented consistently' => sub {
 };
 
 subtest 'multiline html comment near EP lines keeps EP safe' => sub {
-  my $in = "<div>\n<%= \$title %>\n<!--\nnote\n-->\n<p>\nHello\n</p>\n</div>\n";
+  my $in =
+        "<div>\n"
+      . "<%= \$title %>\n"
+      . "<!--\n"
+      . "note\n" . "-->\n" . "<p>\n"
+      . "Hello\n"
+      . "</p>\n"
+      . "</div>\n";
 
   my $expected =
-"<div>\n  <%= \$title %>\n  <!--\n  note\n  -->\n  <p>\n    Hello\n  </p>\n</div>\n";
+        "<div>\n"
+      . "  <%= \$title %>\n"
+      . "  <!--\n"
+      . "  note\n"
+      . "  -->\n"
+      . "  <p>\n"
+      . "    Hello\n"
+      . "  </p>\n"
+      . "</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'multiline comment block indents normally while EP line stays untouched';
@@ -424,14 +597,15 @@ subtest 'multiline html comment near EP lines keeps EP safe' => sub {
 
 subtest 'multiline inline style indents cleanly' => sub {
   my $in =
-"<div style=\"\nposition:absolute;\ntop:6%;\nleft:50%;\ntransform:translateX(-50%);\n\">\n</div>\n";
+        "<div style=\"\nposition:absolute;\n"
+      . "top:6%;\nleft:50%;\ntransform:translateX(-50%);\n \">\n</div>\n";
 
   my $expected = join "\n",
       '<div style="',
-      '  position:absolute;',
-      '  top:6%;',
-      '  left:50%;',
-      '  transform:translateX(-50%);">',
+      '    position:absolute;',
+      '    top:6%;',
+      '    left:50%;',
+      '    transform:translateX(-50%);">',
       '</div>',
       '';
 
@@ -439,22 +613,26 @@ subtest 'multiline inline style indents cleanly' => sub {
       'multiline inline style declarations are indented';
 };
 
-subtest 'nested multiline inline style follows html indentation' => sub {
-  my $in =
-"<div>\n<div style=\"\nposition:absolute;\ntop:6%;\nleft:50%;\n\">\n</div>\n</div>\n";
+subtest 'multiline inline style closes on final declaration line' => sub {
+  my $in = join "\n",
+      "<div style=\"",
+      "background:#151515;",
+      "color:#eee;",
+      "font-family: system-ui, -apple-system, sans-serif;",
+      "\">",
+      "</div>",
+      "";
 
   my $expected = join "\n",
-      '<div>',
-      '  <div style="',
-      '    position:absolute;',
-      '    top:6%;',
-      '    left:50%;">',
-      '  </div>',
-      '</div>',
-      '';
+      "<div style=\"",
+      "    background:#151515;",
+      "    color:#eee;",
+      "    font-family: system-ui, -apple-system, sans-serif;\">",
+      "</div>",
+      "";
 
   is $pt->tidy( $in ), $expected,
-      'multiline inline style declarations follow surrounding html indentation';
+      'inline style closes on final declaration line';
 };
 
 subtest 'multiline inline style with EP is left alone' => sub {
@@ -463,8 +641,8 @@ subtest 'multiline inline style with EP is left alone' => sub {
 
   my $expected = join "\n",
       '<div style="',
-      '  color:<%= $color %>;',
-      '  background:#151515;">',
+      '    color:<%= $color %>;',
+      '    background:#151515;">',
       '</div>',
       '';
 
@@ -486,9 +664,9 @@ subtest 'multiline inline style with inline content under form stays aligned' =>
   my $expected = join "\n",
       "<form>",
       "  <button type=\"submit\" style=\"",
-      "    background:#2d6cdf;",
-      "    color:#fff;",
-      "    cursor:pointer;\">",
+      "      background:#2d6cdf;",
+      "      color:#fff;",
+      "      cursor:pointer;\">",
       "    Add",
       "  </button>",
       "</form>",
@@ -516,13 +694,13 @@ subtest 'multiline inline style with inline content splits into block form' =>
   my $expected = join "\n",
       "<div>",
       "  <button type=\"submit\" style=\"",
-      "    background:#2d6cdf;",
-      "    color:#fff;",
-      "    border:0;",
-      "    border-radius:8px;",
-      "    padding:8px 12px;",
-      "    font-weight:600;",
-      "    cursor:pointer;\">",
+      "      background:#2d6cdf;",
+      "      color:#fff;",
+      "      border:0;",
+      "      border-radius:8px;",
+      "      padding:8px 12px;",
+      "      font-weight:600;",
+      "      cursor:pointer;\">",
       "    Add",
       "  </button>",
       "</div>",
@@ -531,6 +709,27 @@ subtest 'multiline inline style with inline content splits into block form' =>
   is $pt->tidy( $in ), $expected,
       'multiline inline style with inline content becomes block form';
     };
+
+subtest 'multiline inline style anchor becomes block form' => sub {
+  my $in = join "\n",
+      "<a href=\"<%= \$back %>\" style=\"",
+      "display:inline-flex;",
+      "align-items:center;",
+      "text-decoration:none;\">Back</a>",
+      "";
+
+  my $expected = join "\n",
+      "<a href=\"<%= \$back %>\" style=\"",
+      "    display:inline-flex;",
+      "    align-items:center;",
+      "    text-decoration:none;\">",
+      "  Back",
+      "</a>",
+      "";
+
+  is $pt->tidy( $in ), $expected,
+      'inline style anchor closes on declaration line and splits content';
+};
 
 subtest 'multiline opening tag aligns under parent' => sub {
   my $in = join "\n",
@@ -552,6 +751,32 @@ subtest 'multiline opening tag aligns under parent' => sub {
       "";
 
   is $pt->tidy( $in ), $expected, 'multiline opening tag aligns under parent';
+};
+
+subtest 'nested multiline inline style follows html indentation' => sub {
+  my $in = join "\n",
+      "<div>",
+      "<div style=\"",
+      "position:absolute;",
+      "top:6%;",
+      "left:50%;",
+      "\">",
+      "</div>",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      '<div>',
+      '  <div style="',
+      '      position:absolute;',
+      '      top:6%;',
+      '      left:50%;">',
+      '  </div>',
+      '</div>',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+      'multiline inline style declarations follow surrounding html indentation';
 };
 
 subtest 'nested div after script block closes cleanly' => sub {
@@ -747,10 +972,21 @@ subtest 'single-line mixed tag/content lines are left alone' => sub {
 
 subtest 'script block indented, interior lines left structurally alone' => sub {
   my $in =
-      "<div>\n<script>\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
+        "<div>\n"
+      . "<script>\n"
+      . "if (x < 10) {\n"
+      . "console.log(x);\n" . "}\n"
+      . "</script>\n"
+      . "</div>\n";
 
   my $expected =
-"<div>\n  <script>\n    if (x < 10) {\n    console.log(x);\n    }\n  </script>\n</div>\n";
+        "<div>\n"
+      . "  <script>\n"
+      . "    if (x < 10) {\n"
+      . "    console.log(x);\n"
+      . "    }\n"
+      . "  </script>\n"
+      . "</div>\n";
 
   is $pt->tidy( $in ), $expected,
       'script wrapper lines indent, script body is left alone';
@@ -782,8 +1018,8 @@ subtest 'script block interior lines get one local indent level' => sub {
 };
 
 subtest 'script block near EP lines keeps EP safe' => sub {
-  my $in =
-"<div>\n<%= \$title %>\n<script>\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
+  my $in = "<div>\n<%= \$title %>\n<script>\nif (x < 10) {"
+      . "\nconsole.log(x);\n}\n</script>\n</div>\n";
 
   my $expected = join "\n",
       "<div>",
@@ -802,7 +1038,12 @@ subtest 'script block near EP lines keeps EP safe' => sub {
 
 subtest 'script block with inline attributes is handled safely' => sub {
   my $in =
-"<div>\n<script type=\"text/javascript\">\nif (x < 10) {\nconsole.log(x);\n}\n</script>\n</div>\n";
+        "<div>\n"
+      . "<script type=\"text/javascript\">\n"
+      . "if (x < 10) {\n"
+      . "console.log(x);\n" . "}\n"
+      . "</script>\n"
+      . "</div>\n";
 
   my $expected = join "\n",
       "<div>",
@@ -1004,48 +1245,183 @@ subtest 'void elements do not increase indentation' => sub {
 };
 
 ############
-subtest 'multiline inline style closes on final declaration line' => sub {
+subtest 'columns splits long html comment into multiple comment lines at safe
+punctuation' => sub {
+  my $pt = Mojo::PrettyTidy->new(
+                                  indent_width => 2,
+                                  tab_width    => 2,
+                                  columns      => 50, );
+
+  my $comment =
+        '<!-- canonical field name is ih; keep hash too until '
+      . '/qbt/add_one is fully migrated -->';
+
+  my $in = join "\n", '<div>', "  $comment", '</div>', '';
+
+  my $expected = join "\n",
+      '<div>',
+      '  <!-- canonical field name is ih; -->',
+      '  <!-- keep hash too until /qbt/add_one is fully migrated -->',
+      '</div>',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+'long html comment splits into multiple comment lines at safe punctuation';
+};
+
+subtest 'single-line button expands into block form by default' => sub {
   my $in = join "\n",
-      "<div style=\"",
-      "background:#151515;",
-      "color:#eee;",
-      "font-family: system-ui, -apple-system, sans-serif;",
-      "\">",
+      "<div>",
+      '<button type="button" '
+      . 'onclick="qbtlOpenViewModal(\'<%= $t->{ih} %>\')">View</button>',
       "</div>",
       "";
 
   my $expected = join "\n",
-      "<div style=\"",
-      "  background:#151515;",
-      "  color:#eee;",
-      "  font-family: system-ui, -apple-system, sans-serif;\">",
+      "<div>",
+      '  <button type="button"',
+      '    onclick="qbtlOpenViewModal(\'<%= $t->{ih} %>\')">',
+      "    View",
+      "  </button>",
+      "</div>",
+      "";
+
+  is $pt->tidy( $in ), $expected, 'button expands into block form';
+};
+
+subtest 'single-line input expands into vertical attribute form by default' =>
+    sub {
+  my $in = join "\n",
+      "<form>",
+      "<input type=\"hidden\" name=\"ih\" value=\"<%= \$ih %>\">",
+      "</form>",
+      "";
+
+  my $expected = join "\n",
+      "<form>",
+      "  <input type=\"hidden\"",
+      "    name=\"ih\"",
+      "    value=\"<%= \$ih %>\">",
+      "</form>",
+      "";
+
+  is $pt->tidy( $in ), $expected, 'input expands into vertical attribute form';
+    };
+
+subtest 'form with child content uses vertical attribute form by default' =>
+    sub {
+  my $in = join "\n",
+      "<div>",
+      '<form method="post" action="/qbt/add_one">',
+      '<input type="hidden" name="ih" value="<%= $ih %>">',
+      "</form>",
+      "</div>",
+      "";
+
+  my $expected = join "\n",
+      "<div>",
+      '  <form method="post"',
+      '      action="/qbt/add_one">',
+      '    <input type="hidden"',
+      '      name="ih"',
+      '      value="<%= $ih %>">',
+      "  </form>",
       "</div>",
       "";
 
   is $pt->tidy( $in ), $expected,
-      'inline style closes on final declaration line';
-};
+      'form opening tag expands and child content stays readable';
+    };
 
-subtest 'multiline inline style anchor becomes block form' => sub {
+subtest 'preferred form input and button layout uses hanging attribute
+    style' => sub {
   my $in = join "\n",
-      "<a href=\"<%= \$back %>\" style=\"",
-      "display:inline-flex;",
-      "align-items:center;",
-      "text-decoration:none;\">Back</a>",
-      "";
+      '<form method="get" action="/qbt/view" '
+      . 'target="_blank" style="display:inline; margin:0;">',
+      '<input type="hidden" ' . 'name="ih" value="<%= $t->{ih} %>">',
+      '<input type="hidden" '
+      . 'name="return_to" value="<%= url_for->to_string %>">',
+      '<button type="button" '
+      . 'onclick="qbtlOpenViewModal(\'<%= $t->{ih} %>\')">View</button>',
+      '</form>',
+      '';
 
   my $expected = join "\n",
-      "<a href=\"<%= \$back %>\" style=\"",
-      "  display:inline-flex;",
-      "  align-items:center;",
-      "  text-decoration:none;\">",
-      "  Back",
-      "</a>",
-      "";
+      '<form method="get"',
+      '    action="/qbt/view"',
+      '    target="_blank"',
+      '    style="display:inline; margin:0;">',
+      '  <input type="hidden"',
+      '    name="ih"',
+      '    value="<%= $t->{ih} %>">',
+      '  <input type="hidden"',
+      '    name="return_to"',
+      '    value="<%= url_for->to_string %>">',
+      '  <button type="button"',
+      '    onclick="qbtlOpenViewModal(\'<%= $t->{ih} %>\')">',
+      '    View',
+      '  </button>',
+      '</form>',
+      '';
 
   is $pt->tidy( $in ), $expected,
-      'inline style anchor closes on declaration line and splits content';
+      'preferred elements use hanging attribute layout';
 };
+
+subtest 'multiline inline style body hangs deeper than following child tag' =>
+    sub {
+  my $in = join "\n",
+      "<div>",
+      '  <div style="',
+      'display:flex;',
+      'gap:8px;',
+      'flex:0 0 auto;',
+      'align-items:center;">',
+      '  <form id="vmAddForm" method="post" action="/qbt/add_one"'
+      . '  style="margin:0;">', '  </form>', '</div>', '';
+
+  my $expected = join "\n",
+      "<div>",
+      '  <div style="',
+      '      display:flex;',
+      '      gap:8px;',
+      '      flex:0 0 auto;',
+      '      align-items:center;">',
+      '    <form id="vmAddForm"',
+      '        method="post"',
+      '        action="/qbt/add_one"',
+      '        style="margin:0;">',
+      '    </form>',
+      '  </div>',
+      '';
+
+  is $pt->tidy( $in ), $expected,
+      'style body hangs deeper than following child tag';
+    };
 ############
 
 done_testing;
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+###
