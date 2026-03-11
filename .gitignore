@@ -1,12 +1,15 @@
 
 .DS_Store
-mojo_prettytidy_cpan_quality_notes.txt
 MANIFEST.bak
 MANIFEST.SKIP
+/blib/
+/Makefile
+/MYMETA.json
+/MYMETA.yml
+/pm_to_blib
+/share/samples/testing/
+mojo_prettytidy_cpan_quality_notes.txt
+.mojo_prettytidy_cpan_quality_notes.txt
 share/samples/parsed.sample_1_stripped.html.ep
 share/samples/sample_1_stripped.html.ep
-.mojo_prettytidy_cpan_quality_notes.txt
-parsed.sample_1_stripped.html.ep
-share/samples/parsed.sample_1_stripped
-share/samples/parsed.sample_1_stripped_2
-share/samples/parsed.sample_1_stripped_2.html.ep
+share/samples/debug.html.ep

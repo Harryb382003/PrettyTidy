@@ -6,12 +6,14 @@ use lib 'lib';
 use lib 't/lib';
 
 use Test::More;
-use File::Temp qw(tempfile);
+use File::Temp qw(tempfile tempdir);
 use File::Spec;
+use File::Path qw(make_path);
 use Mojo::PrettyTidy;
 use Test::CLI::Capture qw(run_cmd);
 
-my $script = File::Spec->catfile( qw(script mojo-prettytidy) );
+my $script =
+    File::Spec->rel2abs( File::Spec->catfile( qw(script mojo-prettytidy) ) );
 
 ok -e $script, 'CLI script exists';
 ok -x $script, 'CLI script is executable';
@@ -52,6 +54,18 @@ subtest '--backup without --write is rejected' => sub {
 
   isnt $r->{exit}, 0, 'exit is non-zero';
   like $r->{stderr}, qr/--backup requires --write/,
+      'stderr explains invalid usage';
+};
+
+subtest '--check with directory input is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  mkdir $indir or die "Cannot mkdir '$indir': $!";
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--check', $indir ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--check.*single|directory.*not supported/i,
       'stderr explains invalid usage';
 };
 
@@ -109,6 +123,18 @@ subtest '--diff returns 1 and prints diff when changes are needed' => sub {
   is $r->{stderr}, '', 'stderr is empty';
 };
 
+subtest '--diff with directory input is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  mkdir $indir or die "Cannot mkdir '$indir': $!";
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', $indir ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--diff.*single|directory.*not supported/i,
+      'stderr explains invalid usage';
+};
+
 subtest '--diff with --write is rejected' => sub {
   my ( $fh, $path ) = tempfile();
   print {$fh} "alpha  \n";
@@ -122,22 +148,126 @@ subtest '--diff with --write is rejected' => sub {
       'stderr explains invalid usage';
 };
 
-subtest '--output writes tidied content to a separate file' => sub {
-  my ( $in_fh,  $in_path )  = tempfile();
-  my ( $out_fh, $out_path ) = tempfile();
-  close $out_fh;
+subtest
+    'directory input with --prefix and --outdir writes matching html.ep files'
+    => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
 
-  print {$in_fh} "alpha  \nbeta\t \n";
-  close $in_fh;
+  mkdir $indir  or die "Cannot mkdir '$indir': $!";
+  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
+
+  my $ep1 = File::Spec->catfile( $indir, 'one.html.ep' );
+  my $ep2 = File::Spec->catfile( $indir, 'two.html.ep' );
+  my $txt = File::Spec->catfile( $indir, 'ignore.txt' );
+  my $oth = File::Spec->catfile( $indir, 'three.js.ep' );
+
+  spurt( $ep1, "alpha  \n" );
+  spurt( $ep2, "beta\t \n" );
+  spurt( $txt, "leave me alone\n" );
+  spurt( $oth, "also ignored\n" );
+
+  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
+  my $out3 = File::Spec->catfile( $outdir, 'pt.ignore.txt' );
+  my $out4 = File::Spec->catfile( $outdir, 'pt.three.js.ep' );
 
   my $r = run_cmd(
-          argv => [ $^X, '-Ilib', $script, '--output', $out_path, $in_path ], );
+                   argv => [
+                             $^X,        '-Ilib', $script,    $indir,
+                             '--prefix', 'pt.',   '--outdir', $outdir
+                   ], );
 
-  is $r->{exit},         0,                    '--output exits 0';
-  is $r->{stdout},       '',                   'stdout is empty';
-  is $r->{stderr},       '',                   'stderr is empty';
-  is slurp( $in_path ),  "alpha  \nbeta\t \n", 'input file was not modified';
-  is slurp( $out_path ), "alpha\nbeta\n", 'output file received tidied content';
+  is $r->{exit},   0,  'directory input exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1,  'first html.ep output exists';
+  ok -e $out2,  'second html.ep output exists';
+  ok !-e $out3, 'non-template file was ignored';
+  ok !-e $out4, 'non-html.ep ep-like file was ignored';
+
+  is slurp( $out1 ), "alpha\n", 'first directory result was tidied';
+  is slurp( $out2 ), "beta\n",  'second directory result was tidied';
+    };
+
+subtest 'multiple input files with --prefix write sibling outputs' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha  \n" );
+  spurt( $in2, "beta\t \n" );
+
+  my $out1 = File::Spec->catfile( $tmpdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $tmpdir, 'pt.two.html.ep' );
+
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--prefix', 'pt.' ],
+      );
+
+  is $r->{exit},   0,  'multi-file --prefix exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1, 'prefixed output for first file exists';
+  ok -e $out2, 'prefixed output for second file exists';
+
+  is slurp( $out1 ), "alpha\n", 'first prefixed output was tidied';
+  is slurp( $out2 ), "beta\n",  'second prefixed output was tidied';
+
+  is slurp( $in1 ), "alpha  \n", 'first input was not modified';
+  is slurp( $in2 ), "beta\t \n", 'second input was not modified';
+};
+
+subtest 'multiple input files with --prefix and --outdir write to output dir' =>
+    sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha  \n" );
+  spurt( $in2, "beta\t \n" );
+
+  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
+  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
+
+  my $r = run_cmd(
+                   argv => [
+                             $^X,   '-Ilib',    $script, $in1, $in2, '--prefix',
+                             'pt.', '--outdir', $outdir
+                   ], );
+
+  is $r->{exit},   0,  'multi-file --prefix --outdir exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+
+  ok -e $out1, 'first output file exists in outdir';
+  ok -e $out2, 'second output file exists in outdir';
+
+  is slurp( $out1 ), "alpha\n", 'first outdir file was tidied';
+  is slurp( $out2 ), "beta\n",  'second outdir file was tidied';
+    };
+
+subtest 'multiple inputs without destination mode are rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+
+  spurt( $in1, "alpha\n" );
+  spurt( $in2, "beta\n" );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2 ], );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/multiple input/i,
+      'stderr explains multiple inputs need an output mode';
 };
 
 subtest '--output with --check is rejected' => sub {
@@ -168,6 +298,25 @@ subtest '--output with --diff is rejected' => sub {
       'stderr explains invalid usage';
 };
 
+subtest '--output with multiple inputs is rejected' => sub {
+  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+
+  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+  my $out = File::Spec->catfile( $tmpdir, 'out.html.ep' );
+
+  spurt( $in1, "alpha\n" );
+  spurt( $in2, "beta\n" );
+
+  my $r =
+      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--output', $out ],
+      );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/--output.*multiple input|multiple input.*--output/i,
+      'stderr explains invalid usage';
+};
+
 subtest '--output with --write is rejected' => sub {
   my ( $fh, $path ) = tempfile();
   print {$fh} "alpha  \n";
@@ -180,6 +329,24 @@ subtest '--output with --write is rejected' => sub {
   isnt $r->{exit}, 0, 'exit is non-zero';
   like $r->{stderr}, qr/--output cannot be combined with --write/,
       'stderr explains invalid usage';
+};
+
+subtest '--output writes tidied content to a separate file' => sub {
+  my ( $in_fh,  $in_path )  = tempfile();
+  my ( $out_fh, $out_path ) = tempfile();
+  close $out_fh;
+
+  print {$in_fh} "alpha  \nbeta\t \n";
+  close $in_fh;
+
+  my $r = run_cmd(
+          argv => [ $^X, '-Ilib', $script, '--output', $out_path, $in_path ], );
+
+  is $r->{exit},         0,                    '--output exits 0';
+  is $r->{stdout},       '',                   'stdout is empty';
+  is $r->{stderr},       '',                   'stderr is empty';
+  is slurp( $in_path ),  "alpha  \nbeta\t \n", 'input file was not modified';
+  is slurp( $out_path ), "alpha\nbeta\n", 'output file received tidied content';
 };
 
 subtest '--stdin with --output writes tidied content to a file' => sub {
@@ -264,130 +431,6 @@ subtest '--version prints version and exits 0' => sub {
   is $r->{stderr}, '', 'stderr is empty';
 };
 
-############
-
-subtest 'multiple input files with --prefix write sibling outputs' => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-
-  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
-  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
-
-  spurt( $in1, "alpha  \n" );
-  spurt( $in2, "beta\t \n" );
-
-  my $out1 = File::Spec->catfile( $tmpdir, 'pt.one.html.ep' );
-  my $out2 = File::Spec->catfile( $tmpdir, 'pt.two.html.ep' );
-
-  my $r =
-      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--prefix', 'pt.' ],
-      );
-
-  is $r->{exit},   0,  'multi-file --prefix exits 0';
-  is $r->{stdout}, '', 'stdout is empty';
-  is $r->{stderr}, '', 'stderr is empty';
-
-  ok -e $out1, 'prefixed output for first file exists';
-  ok -e $out2, 'prefixed output for second file exists';
-
-  is slurp( $out1 ), "alpha\n", 'first prefixed output was tidied';
-  is slurp( $out2 ), "beta\n",  'second prefixed output was tidied';
-
-  is slurp( $in1 ), "alpha  \n", 'first input was not modified';
-  is slurp( $in2 ), "beta\t \n", 'second input was not modified';
-};
-
-subtest 'multiple input files with --prefix and --outdir write to output dir' =>
-    sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
-  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
-
-  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
-  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
-
-  spurt( $in1, "alpha  \n" );
-  spurt( $in2, "beta\t \n" );
-
-  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
-  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
-
-  my $r = run_cmd(
-                   argv => [
-                             $^X,   '-Ilib',    $script, $in1, $in2, '--prefix',
-                             'pt.', '--outdir', $outdir
-                   ], );
-
-  is $r->{exit},   0,  'multi-file --prefix --outdir exits 0';
-  is $r->{stdout}, '', 'stdout is empty';
-  is $r->{stderr}, '', 'stderr is empty';
-
-  ok -e $out1, 'first output file exists in outdir';
-  ok -e $out2, 'second output file exists in outdir';
-
-  is slurp( $out1 ), "alpha\n", 'first outdir file was tidied';
-  is slurp( $out2 ), "beta\n",  'second outdir file was tidied';
-    };
-
-subtest
-    'directory input with --prefix and --outdir writes matching html.ep files'
-    => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
-  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
-
-  mkdir $indir  or die "Cannot mkdir '$indir': $!";
-  mkdir $outdir or die "Cannot mkdir '$outdir': $!";
-
-  my $ep1 = File::Spec->catfile( $indir, 'one.html.ep' );
-  my $ep2 = File::Spec->catfile( $indir, 'two.html.ep' );
-  my $txt = File::Spec->catfile( $indir, 'ignore.txt' );
-  my $oth = File::Spec->catfile( $indir, 'three.js.ep' );
-
-  spurt( $ep1, "alpha  \n" );
-  spurt( $ep2, "beta\t \n" );
-  spurt( $txt, "leave me alone\n" );
-  spurt( $oth, "also ignored\n" );
-
-  my $out1 = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
-  my $out2 = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
-  my $out3 = File::Spec->catfile( $outdir, 'pt.ignore.txt' );
-  my $out4 = File::Spec->catfile( $outdir, 'pt.three.js.ep' );
-
-  my $r = run_cmd(
-                   argv => [
-                             $^X,        '-Ilib', $script,    $indir,
-                             '--prefix', 'pt.',   '--outdir', $outdir
-                   ], );
-
-  is $r->{exit},   0,  'directory input exits 0';
-  is $r->{stdout}, '', 'stdout is empty';
-  is $r->{stderr}, '', 'stderr is empty';
-
-  ok -e $out1,  'first html.ep output exists';
-  ok -e $out2,  'second html.ep output exists';
-  ok !-e $out3, 'non-template file was ignored';
-  ok !-e $out4, 'non-html.ep ep-like file was ignored';
-
-  is slurp( $out1 ), "alpha\n", 'first directory result was tidied';
-  is slurp( $out2 ), "beta\n",  'second directory result was tidied';
-    };
-
-subtest 'multiple inputs without destination mode are rejected' => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-
-  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
-  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
-
-  spurt( $in1, "alpha\n" );
-  spurt( $in2, "beta\n" );
-
-  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2 ], );
-
-  isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/multiple input/i,
-      'stderr explains multiple inputs need an output mode';
-};
-
 subtest '--write with --prefix is rejected' => sub {
   my ( $fh, $path ) = tempfile( SUFFIX => '.html.ep' );
   print {$fh} "alpha  \n";
@@ -418,47 +461,258 @@ subtest '--write with --outdir is rejected' => sub {
       'stderr explains invalid usage';
 };
 
-subtest '--output with multiple inputs is rejected' => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
+############
 
-  my $in1 = File::Spec->catfile( $tmpdir, 'one.html.ep' );
-  my $in2 = File::Spec->catfile( $tmpdir, 'two.html.ep' );
-  my $out = File::Spec->catfile( $tmpdir, 'out.html.ep' );
+subtest '--config loads prefix and outdir defaults' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
 
-  spurt( $in1, "alpha\n" );
-  spurt( $in2, "beta\n" );
+  my $infile = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
 
-  my $r =
-      run_cmd( argv => [ $^X, '-Ilib', $script, $in1, $in2, '--output', $out ],
-      );
+  spurt( $infile, "alpha  \n" );
+  make_path( $outdir );
 
-  isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--output.*multiple input|multiple input.*--output/i,
-      'stderr explains invalid usage';
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "prefix": "pt.",
+    "outdir": "parsed"
+  }
+JSON
+  );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+                   cwd  => $tmpdir, );
+
+  my $outfile = File::Spec->catfile( $outdir, 'pt.one.html.ep' );
+
+  is $r->{exit},   0,  '--config exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok -e $outfile, 'output file was created from config defaults';
+  is slurp( $outfile ), "alpha\n", 'output file contains tidied content';
 };
 
-subtest '--check with directory input is rejected' => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
-  mkdir $indir or die "Cannot mkdir '$indir': $!";
+subtest 'auto-detects .mojo-prettytidy.json from current directory' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
 
-  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--check', $indir ], );
+  my $infile = File::Spec->catfile( $tmpdir, 'two.html.ep' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+  my $cfg    = File::Spec->catfile( $tmpdir, '.mojo-prettytidy.json' );
 
-  isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--check.*single|directory.*not supported/i,
-      'stderr explains invalid usage';
+  spurt( $infile, "beta\t \n" );
+  make_path( $outdir );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "prefix": "pt.",
+    "outdir": "parsed"
+  }
+JSON
+  );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $infile ],
+                   cwd  => $tmpdir, );
+
+  my $outfile = File::Spec->catfile( $outdir, 'pt.two.html.ep' );
+
+  is $r->{exit},   0,  'auto-config run exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok -e $outfile, 'output file was created from auto-detected config';
+  is slurp( $outfile ), "beta\n", 'auto-config output contains tidied content';
 };
 
-subtest '--diff with directory input is rejected' => sub {
-  my $tmpdir = File::Temp::tempdir( CLEANUP => 1 );
-  my $indir  = File::Spec->catdir( $tmpdir, 'templates' );
-  mkdir $indir or die "Cannot mkdir '$indir': $!";
+subtest 'CLI --outdir overrides config outdir' => sub {
+  my $tmpdir  = tempdir( CLEANUP => 1 );
+  my $cfg     = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile  = File::Spec->catfile( $tmpdir, 'three.html.ep' );
+  my $cfg_out = File::Spec->catdir( $tmpdir, 'cfg_out' );
+  my $cli_out = File::Spec->catdir( $tmpdir, 'cli_out' );
 
-  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--diff', $indir ], );
+  spurt( $infile, "gamma  \n" );
+  make_path( $cfg_out );
+  make_path( $cli_out );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "prefix": "pt.",
+    "outdir": "cfg_out"
+  }
+JSON
+  );
+
+  my $r = run_cmd(
+                   argv => [
+                             $^X,  '-Ilib',    $script,  '--config',
+                             $cfg, '--outdir', $cli_out, $infile,
+                   ],
+                   cwd => $tmpdir, );
+
+  my $cfg_file = File::Spec->catfile( $cfg_out, 'pt.three.html.ep' );
+  my $cli_file = File::Spec->catfile( $cli_out, 'pt.three.html.ep' );
+
+  is $r->{exit},   0,  'CLI override run exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok !-e $cfg_file, 'config outdir was not used';
+  ok -e $cli_file,  'CLI outdir was used';
+  is slurp( $cli_file ), "gamma\n", 'CLI outdir file contains tidied content';
+};
+
+subtest 'CLI --prefix overrides config prefix' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'four.html.ep' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+
+  spurt( $infile, "delta  \n" );
+  make_path( $outdir );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "prefix": "cfg.",
+    "outdir": "parsed"
+  }
+JSON
+  );
+
+  my $r = run_cmd(
+                   argv => [
+                             $^X,  '-Ilib',    $script, '--config',
+                             $cfg, '--prefix', 'cli.',  $infile,
+                   ],
+                   cwd => $tmpdir, );
+
+  my $cfg_file = File::Spec->catfile( $outdir, 'cfg.four.html.ep' );
+  my $cli_file = File::Spec->catfile( $outdir, 'cli.four.html.ep' );
+
+  is $r->{exit},   0,  'CLI prefix override run exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok !-e $cfg_file, 'config prefix was not used';
+  ok -e $cli_file,  'CLI prefix was used';
+  is slurp( $cli_file ), "delta\n", 'CLI prefix file contains tidied content';
+};
+
+subtest 'unknown config key is rejected' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'five.html.ep' );
+
+  spurt( $infile, "epsilon\n" );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "prefix": "pt.",
+    "bogus_key": true
+  }
+JSON
+  );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+                   cwd  => $tmpdir, );
 
   isnt $r->{exit}, 0, 'exit is non-zero';
-  like $r->{stderr}, qr/--diff.*single|directory.*not supported/i,
-      'stderr explains invalid usage';
+  like $r->{stderr}, qr/Unknown config key 'bogus_key'/,
+      'stderr explains unknown config key';
+};
+
+subtest 'invalid JSON config is rejected' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'six.html.ep' );
+
+  spurt( $infile, "zeta\n" );
+  spurt( $cfg,    "{\n  \"prefix\": \"pt.\",\n" );    # deliberately invalid
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+                   cwd  => $tmpdir, );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/config|JSON|malformed|unexpected/i,
+      'stderr explains invalid JSON';
+};
+
+subtest 'config file must contain a JSON object' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'seven.html.ep' );
+
+  spurt( $infile, "eta\n" );
+  spurt(
+    $cfg,
+    <<'JSON'
+    [
+      "not",
+      "an",
+      "object"
+    ]
+JSON
+  );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+                   cwd  => $tmpdir, );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/must contain a JSON object/,
+      'stderr explains config must be object';
+};
+
+subtest 'missing explicit --config file is rejected' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $infile = File::Spec->catfile( $tmpdir, 'eight.html.ep' );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'missing.json' );
+
+  spurt( $infile, "theta\n" );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+                   cwd  => $tmpdir, );
+
+  isnt $r->{exit}, 0, 'exit is non-zero';
+  like $r->{stderr}, qr/Cannot open config/,
+      'stderr explains missing config file';
+};
+
+subtest 'config outdir is used relative to current directory' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, '.mojo-prettytidy.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'nine.html.ep' );
+  my $outdir = File::Spec->catdir( $tmpdir, 'parsed' );
+
+  spurt( $infile, "iota  \n" );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+    {
+      "prefix": "pt.",
+      "outdir": "parsed"
+    }
+JSON
+  );
+
+  my $r = run_cmd( argv => [ $^X, '-Ilib', $script, $infile ],
+                   cwd  => $tmpdir, );
+
+  my $outfile = File::Spec->catfile( $outdir, 'pt.nine.html.ep' );
+
+  is $r->{exit},   0,  'relative outdir config run exits 0';
+  is $r->{stdout}, '', 'stdout is empty';
+  is $r->{stderr}, '', 'stderr is empty';
+  ok -e $outfile, 'relative outdir file exists under cwd';
+  is slurp( $outfile ), "iota\n",
+      'relative outdir file contains tidied content';
 };
 
 done_testing;

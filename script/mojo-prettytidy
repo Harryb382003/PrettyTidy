@@ -7,38 +7,45 @@ use feature 'signatures';
 use Getopt::Long qw(GetOptions);
 use File::Copy   qw(copy);
 use File::Spec;
+use File::Path qw(make_path);
+use JSON::PP   qw(decode_json);
 use Pod::Usage qw(pod2usage);
 
 use lib 'lib';
 use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
 
-my $write       = 0;
-my $check       = 0;
-my $help        = 0;
-my $man         = 0;
-my $output_path = '';
-my $stdin       = 0;
-my $version     = 0;
-my $backup      = 0;
-my $diff        = 0;
-my $prefix      = '';
-my $outdir      = '';
-my $backup_ext  = '.bak';
+my $backup         = 0;
+my $backup_ext     = '.bak';
+my $check          = 0;
+my $cli_outdir_set = 0;
+my $cli_prefix_set = 0;
+my $config_path    = '';
+my $diff           = 0;
+my $help           = 0;
+my $man            = 0;
+my $outdir         = '';
+my $output_path    = '';
+my $prefix         = '';
+my $stdin          = 0;
+my $version        = 0;
+my $write          = 0;
 
 GetOptions(
-            'write|w'      => \$write,
-            'output|o=s'   => \$output_path,
-            'check|c'      => \$check,
-            'stdin'        => \$stdin,
-            'version|v'    => \$version,
-            'backup'       => \$backup,
-            'backup-ext=s' => \$backup_ext,
-            'diff'         => \$diff,
-            'help|h'       => \$help,
-            'man'          => \$man,
-            'prefix|pre=s' => \$prefix,
-            'outdir=s'     => \$outdir,
+
+  'backup'       => \$backup,
+  'backup-ext=s' => \$backup_ext,
+  'check|c'      => \$check,
+  'config=s'     => \$config_path,
+  'diff'         => \$diff,
+  'help|h'       => \$help,
+  'man'          => \$man,
+  'output|o=s'   => \$output_path,
+  'outdir=s'     => sub ( $opt, $val ) { $outdir = $val; $cli_outdir_set = 1; },
+  'prefix|pre=s' => sub ( $opt, $val ) { $prefix = $val; $cli_prefix_set = 1; },
+  'stdin'        => \$stdin,
+  'version|v'    => \$version,
+  'write|w'      => \$write,
 ) or pod2usage( 2 );
 
 pod2usage( 1 )             if $help;
@@ -50,6 +57,24 @@ if ( $version ) {
 }
 
 my @inputs = @ARGV;
+
+my $cfg = {};
+
+if ( length $config_path ) {
+  $cfg = _load_config_file( $config_path );
+  _validate_config( $cfg, $config_path );
+}
+elsif ( -f _default_config_path() ) {
+  my $path = _default_config_path();
+  $cfg = _load_config_file( $path );
+  _validate_config( $cfg, $path );
+}
+
+$prefix = $cfg->{prefix}
+    if exists $cfg->{prefix} && !$cli_prefix_set;
+
+$outdir = $cfg->{outdir}
+    if exists $cfg->{outdir} && !$cli_outdir_set;
 
 pod2usage( "--backup requires --write\n" )
     if $backup && !$write;
@@ -230,6 +255,82 @@ sub _collect_input_files ( @inputs ) {
   return @files;
 }
 
+sub _default_config_path () {
+  return '.mojo-prettytidy.json';
+}
+
+sub _load_config_file ( $path ) {
+  open my $fh, '<', $path or die "Cannot open config '$path' for reading: $!";
+  local $/;
+  my $json = <$fh>;
+  close $fh;
+
+  my $cfg = eval { decode_json( $json ) };
+  die "Invalid JSON in config '$path': $@\n" if $@;
+  die "Config '$path' must contain a JSON object\n"
+      unless ref( $cfg ) eq 'HASH';
+
+  return $cfg;
+}
+
+sub _validate_config ( $cfg, $path ) {
+  my %allowed = map { $_ => 1 } qw(
+      indent_width
+      tab_width
+      prefix
+      outdir
+      columns
+  );
+
+  for my $k ( keys %$cfg ) {
+    die "Unknown config key '$k' in '$path'\n"
+        unless $allowed{$k};
+  }
+}
+
+sub _validate_config ( $cfg, $path ) {
+  my %allowed = map { $_ => 1 } qw(
+      indent_width
+      tab_width
+      prefix
+      outdir
+      columns
+  );
+
+  for my $k ( sort keys %$cfg ) {
+    die "Unknown config key '$k' in '$path'\n"
+        unless $allowed{$k};
+  }
+
+  if ( exists $cfg->{indent_width} ) {
+    die "Config key 'indent_width' in '$path' must be a positive integer\n"
+        unless defined( $cfg->{indent_width} )
+        && $cfg->{indent_width} =~ /\A[1-9][0-9]*\z/;
+  }
+
+  if ( exists $cfg->{tab_width} ) {
+    die "Config key 'tab_width' in '$path' must be a positive integer\n"
+        unless defined( $cfg->{tab_width} )
+        && $cfg->{tab_width} =~ /\A[1-9][0-9]*\z/;
+  }
+
+  if ( exists $cfg->{prefix} ) {
+    die "Config key 'prefix' in '$path' must be a string\n"
+        if ref( $cfg->{prefix} );
+  }
+
+  if ( exists $cfg->{outdir} ) {
+    die "Config key 'outdir' in '$path' must be a string\n"
+        if ref( $cfg->{outdir} );
+  }
+
+  if ( exists $cfg->{columns} ) {
+    die "Config key 'columns' in '$path' must be a positive integer\n"
+        unless defined( $cfg->{columns} )
+        && $cfg->{columns} =~ /\A[1-9][0-9]*\z/;
+  }
+}
+
 sub _is_template_file ( $path ) {
   return $path =~ /\.html\.ep\z/ ? 1 : 0;
 }
@@ -271,6 +372,21 @@ sub _spew ( $path, $content ) {
   close $fh            or die "Cannot close '$path': $!";
 }
 
+sub _validate_config ( $cfg, $path ) {
+  my %allowed = map { $_ => 1 } qw(
+      indent_width
+      tab_width
+      prefix
+      outdir
+      columns
+  );
+
+  for my $k ( keys %$cfg ) {
+    die "Unknown config key '$k' in '$path'\n"
+        unless $allowed{$k};
+  }
+}
+
 __END__
 
 =pod
@@ -282,6 +398,7 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
+    mojo-prettytidy --config path/to/config.json file.html.ep
     mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
@@ -317,12 +434,24 @@ rewriting it.
 =head2 --backup-ext
 
 When used with C<--write --backup>, choose the backup suffix.
-Default is C<.bak>.
+The default is C<.bak>.
 
 =head2 --check, -c
 
-Exit with status C<0> if the file is already tidy, or C<1> if changes
-would be made.
+Exit with status C<0> if the input file is already tidy, or C<1> if
+changes would be made.
+
+This option requires a single input file.
+
+=head2 --config
+
+Load default options from the specified JSON config file.
+
+If no explicit C<--config> is given, C<mojo-prettytidy> will
+auto-load C<.mojo-prettytidy.json> from the current working
+directory if that file exists.
+
+Command-line options override config values.
 
 =head2 --diff
 
@@ -330,12 +459,15 @@ Print a minimal unified-style diff showing what would change, and exit
 with status C<0> if no changes are needed or C<1> if differences are
 found.
 
+This option requires a single input file.
+
 =head2 --output, -o
 
 Write the tidied result to the specified output file instead of standard
 output.
 
 This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
+It is intended for single-input use.
 
 =head2 --prefix, --pre
 
@@ -364,15 +496,68 @@ Show brief help.
 
 Show full documentation.
 
+=head1 CONFIG FILE
+
+Config files use JSON object syntax. Supported keys currently include:
+
+=over 4
+
+=item * C<indent_width>
+
+=item * C<tab_width>
+
+=item * C<prefix>
+
+=item * C<outdir>
+
+=back
+
+Example:
+
+    {
+      "prefix": "pt.",
+      "outdir": "share/samples/testing"
+    }
+
+=head1 DIRECTORY INPUT
+
+When a positional input is a directory, C<mojo-prettytidy> scans it
+non-recursively and processes matching C<.html.ep> files.
+
+When multiple input files are processed, use one of:
+
+=over 4
+
+=item * C<--write>
+
+Rewrite each file in place.
+
+=item * C<--prefix>
+
+Write sibling output files with prefixed names.
+
+=item * C<--outdir>
+
+Write generated files to the specified output directory.
+
+=back
+
 =head1 EXIT STATUS
 
 =over 4
 
-=item * C<0> success, or no changes needed in C<--check> or C<--diff> mode
+=item * C<0>
 
-=item * C<1> changes would be made in C<--check> mode, or differences were found in C<--diff> mode
+Success, or no changes needed in C<--check> or C<--diff> mode.
 
-=item * C<2> command-line usage error
+=item * C<1>
+
+Changes would be made in C<--check> mode, or differences were found in
+C<--diff> mode.
+
+=item * C<2>
+
+Command-line usage error.
 
 =back
 
@@ -381,6 +566,7 @@ Show full documentation.
 Same terms as Perl itself.
 
 =head1 PROJECT HOME
+
 https://github.com/Harryb382003/PrettyTidy
 
 =cut

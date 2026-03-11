@@ -14,3 +14,8 @@ Revision history for Mojo-PrettyTidy
       - Added pure-Perl diff support with minimal unified-style output
       - Added sample-driven, diff, indentation, and CLI tests
       - Added --output support for writing tidied content to a separate file
+      - add JSON config file support via --config
+      - auto-detect .mojo-prettytidy.json from the current working directory
+      - allow config defaults for prefix/outdir and formatter width settings
+      - ensure CLI options override config values
+      - extend CLI test helper to support child cwd

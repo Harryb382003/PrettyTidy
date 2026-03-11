@@ -12,6 +12,7 @@ use File::Temp qw(tempfile);
 sub run_cmd ( %args ) {
   my $argv  = $args{argv} // die "run_cmd requires 'argv'";
   my $stdin = defined $args{stdin} ? $args{stdin} : '';
+  my $cwd   = $args{cwd};
 
   ref $argv eq 'ARRAY' or die "'argv' must be an array reference";
   @$argv               or die "'argv' must not be empty";
@@ -29,6 +30,9 @@ sub run_cmd ( %args ) {
   defined $pid or die "fork failed: $!";
 
   if ( $pid == 0 ) {
+    chdir $cwd or die "chdir '$cwd' failed: $!"
+        if defined $cwd && length $cwd;
+
     open STDIN,  '<', $in_path  or die "open STDIN failed: $!";
     open STDOUT, '>', $out_path or die "open STDOUT failed: $!";
     open STDERR, '>', $err_path or die "open STDERR failed: $!";

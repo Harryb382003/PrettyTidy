@@ -784,13 +784,14 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
+    mojo-prettytidy --config path/to/config.json file.html.ep
+    mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
     mojo-prettytidy --diff file.html.ep
     mojo-prettytidy --write file.html.ep
     mojo-prettytidy --write --backup file.html.ep
     mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
-    mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
     mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
     mojo-prettytidy templates --prefix pt. --outdir parsed
@@ -827,6 +828,16 @@ Exit with status C<0> if the input file is already tidy, or C<1> if
 changes would be made.
 
 This option requires a single input file.
+
+=head2 --config
+
+Load default options from the specified JSON config file.
+
+If no explicit C<--config> is given, C<mojo-prettytidy> will
+auto-load C<.mojo-prettytidy.json> from the current working
+directory if that file exists.
+
+Command-line options override config values.
 
 =head2 --diff
 
@@ -870,6 +881,29 @@ Show brief help.
 =head2 --man
 
 Show full documentation.
+
+=head1 CONFIG FILE
+
+Config files use JSON object syntax. Supported keys currently include:
+
+=over 4
+
+=item * C<indent_width>
+
+=item * C<tab_width>
+
+=item * C<prefix>
+
+=item * C<outdir>
+
+=back
+
+Example:
+
+    {
+      "prefix": "pt.",
+      "outdir": "share/samples/testing"
+    }
 
 =head1 DIRECTORY INPUT
 
