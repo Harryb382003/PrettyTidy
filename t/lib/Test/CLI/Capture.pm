@@ -9,7 +9,9 @@ our @EXPORT_OK = qw(run_cmd);
 
 use File::Temp qw(tempfile);
 
+
 sub run_cmd ( %args ) {
+  my $env = $args{env} // {};
   my $argv  = $args{argv} // die "run_cmd requires 'argv'";
   my $stdin = defined $args{stdin} ? $args{stdin} : '';
   my $cwd   = $args{cwd};
@@ -36,6 +38,15 @@ sub run_cmd ( %args ) {
     open STDIN,  '<', $in_path  or die "open STDIN failed: $!";
     open STDOUT, '>', $out_path or die "open STDOUT failed: $!";
     open STDERR, '>', $err_path or die "open STDERR failed: $!";
+
+    for my $k ( keys %$env ) {
+  if ( defined $env->{$k} ) {
+    $ENV{$k} = $env->{$k};
+  }
+  else {
+    delete $ENV{$k};
+  }
+}
 
     exec {$argv->[0]} @$argv or die "exec failed: $!";
   }

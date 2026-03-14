@@ -15,13 +15,15 @@ use lib 'lib';
 use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
 
+my $attrib         = 0;
 my $backup         = 0;
 my $backup_ext     = '.bak';
 my $check          = 0;
+my $config_path    = '.mojo-prettytidy.json';
+my $cli_config_set = 0;
 my $cli_outdir_set = 0;
 my $cli_prefix_set = 0;
 my $columns        = 0;
-my $config_path    = '';
 my $diff           = 0;
 my $help           = 0;
 my $man            = 0;
@@ -33,21 +35,30 @@ my $version        = 0;
 my $write          = 0;
 
 GetOptions(
-
+  'attrib'         => \$attrib,
   'backup'         => \$backup,
   'backup-ext=s'   => \$backup_ext,
   'check|c'        => \$check,
   'columns|cols=i' => \$columns,
-  'config=s'       => \$config_path,
-  'diff'           => \$diff,
-  'help|h'         => \$help,
-  'man'            => \$man,
-  'output|o=s'     => \$output_path,
-  'outdir=s'     => sub ( $opt, $val ) { $outdir = $val; $cli_outdir_set = 1; },
-  'prefix|pre=s' => sub ( $opt, $val ) { $prefix = $val; $cli_prefix_set = 1; },
-  'stdin'        => \$stdin,
-  'version|v'    => \$version,
-  'write|w'      => \$write,
+  'config=s'       => sub ( $opt, $val ) {
+    $config_path    = $val;
+    $cli_config_set = 1;
+  },
+  'diff'       => \$diff,
+  'help|h'     => \$help,
+  'man'        => \$man,
+  'output|o=s' => \$output_path,
+  'outdir=s'   => sub ( $opt, $val ) {
+    $outdir         = $val;
+    $cli_outdir_set = 1;
+  },
+  'prefix|pre=s' => sub ( $opt, $val ) {
+    $prefix         = $val;
+    $cli_prefix_set = 1;
+  },
+  'stdin'     => \$stdin,
+  'version|v' => \$version,
+  'write|w'   => \$write,
 ) or pod2usage( 2 );
 
 pod2usage( 1 )             if $help;
@@ -62,14 +73,13 @@ my @inputs = @ARGV;
 
 my $cfg = {};
 
-if ( length $config_path ) {
+if ( $cli_config_set ) {
   $cfg = _load_config_file( $config_path );
   _validate_config( $cfg, $config_path );
 }
-elsif ( -f _default_config_path() ) {
-  my $path = _default_config_path();
-  $cfg = _load_config_file( $path );
-  _validate_config( $cfg, $path );
+elsif ( -f $config_path ) {
+  $cfg = _load_config_file( $config_path );
+  _validate_config( $cfg, $config_path );
 }
 
 $prefix = $cfg->{prefix}
@@ -255,10 +265,6 @@ sub _collect_input_files ( @inputs ) {
   }
 
   return @files;
-}
-
-sub _default_config_path () {
-  return '.mojo-prettytidy.json';
 }
 
 sub _load_config_file ( $path ) {
