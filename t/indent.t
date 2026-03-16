@@ -256,8 +256,7 @@ subtest 'attrib multiline inline style anchor becomes block form' => sub {
   my $expected = join "\n",
       "<a href=\"<%= \$back %>\" style=\"",
       "    display:inline-flex;",
-      "    align-items:center;",
-      "    text-decoration:none;\">",
+      "    align-items:center;text-decoration:none;\">",
       "  Back",
       "</a>",
       "";
@@ -276,11 +275,13 @@ subtest
       'gap:8px;',
       'flex:0 0 auto;',
       'align-items:center;">',
-      '  <form id="vmAddForm" method="post" action="/qbt/add_one"'
-      . '  style="margin:0;">', '  </form>', '</div>', '';
+      '  <form id="vmAddForm" method="post" action="/ qbt / add_one "'
+      . 'style=" margin : 0;">',
+      '  </form>', '</div>',
+      '';
 
   my $expected = join "\n",
-      "<div>",
+      '<div>',
       '  <div style="',
       '      display:flex;',
       '      gap:8px;',
@@ -288,20 +289,20 @@ subtest
       '      align-items:center;">',
       '    <form id="vmAddForm"',
       '        method="post"',
-      '        action="/qbt/add_one"',
-      '        style="margin:0;">',
+      '        action="/ qbt / add_one "',
+      '        style=" margin : 0;">',
       '    </form>',
       '  </div>',
       '';
 
   is $pt_attrib->tidy( $in ), $expected,
-      'style body hangs deeper than following child tag';
+      ' style body hangs deeper than following child tag ';
     };
 
-subtest 'attrib multiline inline style closes on final declaration line' =>
+subtest ' attrib multiline inline style closes on final declaration line ' =>
     sub {
-  my $in = join "\n",
-      "<div style=\"",
+  my $in = join " \n ",
+      " < div style = \"",
       "background:#151515;",
       "color:#eee;",
       "font-family: system-ui, -apple-system, sans-serif;",
@@ -310,18 +311,19 @@ subtest 'attrib multiline inline style closes on final declaration line' =>
       "";
 
   my $expected = join "\n",
-      "<div style=\"",
+      "< div style = \"",
       "    background:#151515;",
       "    color:#eee;",
-      "    font-family: system-ui, -apple-system, sans-serif;\">",
+      "    font-family: system-ui, -apple-system, sans-serif;",
+      "    \">",
       "</div>",
       "";
 
   is $pt_attrib->tidy( $in ), $expected,
-      'inline style closes on final declaration line';
+      ' inline style closes on final declaration line ';
     };
 
-subtest 'attrib multiline inline style indents cleanly' => sub {
+subtest ' attrib multiline inline style indents cleanly ' => sub {
   my $in =
         "<div style=\"\nposition:absolute;\n"
       . "top:6%;\nleft:50%;\ntransform:translateX(-50%);\n \">\n</div>\n";
@@ -341,13 +343,12 @@ subtest 'attrib multiline inline style indents cleanly' => sub {
 
 subtest 'attrib multiline inline style with EP is left alone' => sub {
   my $in =
-"<div style=\"\ncolor:<%= \$color %>;\nbackground:#151515;\n\">\n</div>\n";
+"<div style=\"\ncolor:<%= \$color %>;\nbackground:#151515;\n\">\n</div >\n";
 
-  my $expected = join "\n",
-      '<div style="',
+  my $expected = join "\n", '<div style="',
       '    color:<%= $color %>;',
       '    background:#151515;">',
-      '</div>',
+      '  </div >',
       '';
 
   is $pt_attrib->tidy( $in ), $expected,
@@ -378,8 +379,7 @@ subtest
       "    border:0;",
       "    border-radius:8px;",
       "    padding:8px 12px;",
-      "    font-weight:600;",
-      "    cursor:pointer;\">",
+      "    font-weight:600;cursor:pointer;\">",
       "    Add",
       "  </button>",
       "</div>",
@@ -405,8 +405,7 @@ subtest
       "<form>",
       "  <button type=\"submit\" style=\"",
       "    background:#2d6cdf;",
-      "    color:#fff;",
-      "    cursor:pointer;\">",
+      "    color:#fff;cursor:pointer;\">",
       "    Add",
       "  </button>",
       "</form>",

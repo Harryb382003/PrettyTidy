@@ -12,6 +12,7 @@ sub new ( $class, %args ) {
           tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
           columns      => defined $args{columns}      ? $args{columns}      : 0,
           attributes   => defined $args{attributes}   ? $args{attributes}   : 0,
+          maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
   }, $class;
 
   return $self;
@@ -19,6 +20,8 @@ sub new ( $class, %args ) {
 
 sub tidy ( $self, $input ) {
   my $text = defined $input ? $input : '';
+
+  $text = $self->_base_preprocess_maxchars( $text ) if $self->{maxchars};
 
   $text = $self->_base_normalize_line_endings( $text );
   $text = $self->_base_strip_trailing_whitespace( $text );
@@ -29,11 +32,17 @@ sub tidy ( $self, $input ) {
     $text = $self->_attrib_expand_preferred_multiline_button_openers( $text );
   }
 
-  $text = $self->_base_apply_basic_indentation( $text );
+  $text =
+        $self->{attributes}
+      ? $self->_attrib_apply_basic_indentation( $text )
+      : $self->_base_apply_basic_indentation( $text );
 
   if ( $self->{columns} ) {
     $text = $self->_cols_apply_column_expansion( $text );
-    $text = $self->_base_apply_basic_indentation( $text );
+    $text =
+          $self->{attributes}
+        ? $self->_attrib_apply_basic_indentation( $text )
+        : $self->_base_apply_basic_indentation( $text );
   }
 
   $text = $self->_base_cohere_percent_clusters( $text );
@@ -47,7 +56,6 @@ sub check ( $self, $input ) {
   $input = '' unless defined $input;
 
   my $output = $self->tidy( $input );
-
   return $output eq $input ? 1 : 0;
 }
 
@@ -56,6 +64,348 @@ sub check ( $self, $input ) {
 # --attrib operationa
 #
 ############################
+
+sub _attrib_apply_basic_indentation ( $self, $text ) {
+  $text = '' unless defined $text;
+
+  my @lines = split /\n/, $text, -1;
+  my @out;
+
+  my $level                     = 0;
+  my $ep_level                  = 0;
+  my $step                      = ' ' x $self->{indent_width};
+  my $in_comment_block          = 0;
+  my $in_script_block           = 0;
+  my $in_style_block            = 0;
+  my $in_inline_style_block     = 0;
+  my $inline_style_base         = 0;
+  my $in_multiline_tag_open     = 0;
+  my $style_inner_level         = 0;
+  my $multiline_tag_base        = 0;
+  my $multiline_tag_opens       = 0;
+  my $multiline_tag_attr_levels = 1;
+  my @inline_style_lines;
+
+  for my $line ( @lines ) {
+    my $trimmed = $line;
+    $trimmed =~ s/^\s+//;
+    $trimmed =~ s/\s+$//;
+
+    if ( $in_inline_style_block ) {
+      push @inline_style_lines, $line;
+
+      if ( _attrib_is_inline_style_end_line( $trimmed ) ) {
+        my $tail_has_closing_tag =
+            _attrib_inline_style_tail_has_closing_tag( $trimmed );
+
+        push @out,
+            $self->_attrib_format_inline_style_block( \@inline_style_lines,
+                                                   $inline_style_base, $step, );
+
+        $level-- if $tail_has_closing_tag && $level > 0;
+
+        @inline_style_lines    = ();
+        $in_inline_style_block = 0;
+      }
+
+      next;
+    }
+
+    if ( $line =~ /^\s*$/ ) {
+      push @out, '';
+      next;
+    }
+
+    if ( $in_multiline_tag_open ) {
+      push @out,
+          ( $step x ( $multiline_tag_base + $multiline_tag_attr_levels ) )
+          . $trimmed;
+
+      if ( _base_is_tag_end_line( $trimmed ) ) {
+        $level++ if $multiline_tag_opens && $trimmed !~ /\/>\s*$/;
+        $in_multiline_tag_open     = 0;
+        $multiline_tag_opens       = 0;
+        $multiline_tag_attr_levels = 1;
+      }
+
+      next;
+    }
+
+    if ( _attrib_is_inline_style_start_line( $trimmed ) ) {
+      my $tag = _attrib_inline_style_tag_name( $trimmed );
+
+      $in_inline_style_block = 1;
+      $inline_style_base     = $level + $ep_level;
+      @inline_style_lines    = ( $line );
+
+      if ( defined $tag
+           && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+      {
+        $level++;
+      }
+
+      next;
+    }
+
+    if ( _base_is_html_line_with_ep( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      next;
+    }
+
+    if ( _base_line_contains_ep( $line ) ) {
+      $ep_level-- if _base_ep_closes_before( $line ) && $ep_level > 0;
+
+      if ( _base_is_ep_control_line( $line ) ) {
+        my $ep_line = _base_normalize_percent_line( $trimmed );
+        push @out, ( $step x $level ) . $ep_line;
+      }
+      elsif ( $line =~ /^\s*%/ ) {
+        my $ep_line       = _base_normalize_percent_line( $trimmed );
+        my $content_depth = $level + _base_effective_ep_indent( $ep_level );
+        push @out, ( $step x $content_depth ) . $ep_line;
+      }
+      else {
+        push @out,
+            ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+            . $trimmed;
+      }
+
+      $ep_level++ if _base_ep_opens_after( $line );
+      next;
+    }
+
+    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+
+      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
+
+      $in_multiline_tag_open = 1;
+      $multiline_tag_base    = $depth;
+      $multiline_tag_opens =
+          (    defined $tag
+            && $tag !~ /\Aspan\z/i
+            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+          ? 1
+          : 0;
+
+      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
+
+      next;
+    }
+
+    if ( $in_comment_block ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      $in_comment_block = 0 if _base_is_html_comment_end_line( $trimmed );
+      next;
+    }
+
+    if ( $in_script_block ) {
+      my $base = $level + _base_effective_ep_indent( $ep_level );
+
+      if ( _base_is_script_end_line( $trimmed ) ) {
+        push @out, ( $step x $base ) . $trimmed;
+        $in_script_block = 0;
+      }
+      else {
+        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
+      }
+
+      next;
+    }
+
+    if ( $in_style_block ) {
+      my $base = $level + _base_effective_ep_indent( $ep_level );
+
+      if ( _base_is_style_end_line( $trimmed ) ) {
+        push @out, ( $step x $base ) . $trimmed;
+        $in_style_block    = 0;
+        $style_inner_level = 0;
+        next;
+      }
+
+      my $line_level = $style_inner_level;
+
+      #Dedent closing-brace lines before printing
+      if ( $trimmed =~ /^\}/ ) {
+        $line_level-- if $line_level > 0;
+      }
+
+      push @out, ( $step x ( $base + 1 + $line_level ) ) . $trimmed;
+
+      #One-line brace rules stay effectively unchanged my $opens = () =
+      my $opens  = () = $trimmed =~ /\{/g;
+      my $closes = () = $trimmed =~ /\}/g;
+
+      $style_inner_level += $opens - $closes;
+      $style_inner_level = 0 if $style_inner_level < 0;
+
+      next;
+    }
+
+    if ( _base_is_html_comment_start_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      $in_comment_block = 1 unless _base_is_html_comment_line( $trimmed );
+      next;
+    }
+
+    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+
+      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
+
+      $in_multiline_tag_open = 1;
+      $multiline_tag_base    = $depth;
+      $multiline_tag_opens =
+          (    defined $tag
+            && $tag !~ /\Aspan\z/i
+            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+          ? 1
+          : 0;
+
+      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
+
+      next;
+    }
+
+    if ( _base_is_script_start_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _attrib_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      $in_script_block = 1 unless _base_is_script_end_line( $trimmed );
+      next;
+    }
+
+    if ( _base_is_style_start_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _attrib_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      $in_style_block    = 1 unless _base_is_style_end_line( $trimmed );
+      $style_inner_level = 0;
+      next;
+    }
+
+    if ( _base_is_doctype_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      next;
+    }
+
+    if ( _base_is_html_comment_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      next;
+    }
+
+    if ( _base_is_mixed_inline_html_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      next;
+    }
+
+    if ( _base_is_html_root_close_line( $trimmed ) ) {
+      push @out,
+          ( $step x _attrib_effective_ep_indent( $ep_level ) ) . $trimmed;
+      next;
+    }
+
+    if ( _base_is_html_root_open_line( $trimmed ) ) {
+      push @out,
+          ( $step x _attrib_effective_ep_indent( $ep_level ) ) . $trimmed;
+      next;
+    }
+
+    #     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
+    #       $level-- if $level > 0;
+    #       push @out,
+    #           ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+    #           . $trimmed;
+    #       next;
+    #     }
+
+    if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
+
+      $level-- if $level > 0;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
+      next;
+    }
+
+    if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+      warn "PURE_OPEN tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
+      $level++;
+      next;
+    }
+
+    if ( _base_is_pure_void_tag_line( $trimmed ) ) {
+      push @out,
+          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+          . $trimmed;
+      next;
+    }
+
+    if ( _base_is_plain_text_line( $trimmed ) ) {
+      my $text_ep_depth = 0;
+
+      if ( $ep_level > 0 ) {
+        $text_ep_depth = $ep_level == 1 ? 1 : $ep_level - 1;
+      }
+
+      my $text_depth = $level + $text_ep_depth;
+
+      push @out, ( $step x $text_depth ) . $trimmed;
+      next;
+    }
+
+    push @out, $trimmed;
+  }
+
+  return join "\n", @out;
+}
+
+sub _attrib_emit_attr_or_style_block ( $self, $indent, $attr_step, $attr,
+                                       $is_last = 0 )
+{
+  $attr = _attrib_normalize_style_attr( $attr );
+  return $indent . $attr_step . $attr . ( $is_last ? '>' : '' );
+}
 
 sub _attrib_expand_preferred_anchor_line ( $self, $line ) {
   return undef unless defined $line;
@@ -74,6 +424,7 @@ sub _attrib_expand_preferred_anchor_line ( $self, $line ) {
 
   my @attrs = _attrib_split_html_attributes( $attrs );
   return undef unless @attrs;
+  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
 
   my @out;
   my $first     = shift @attrs;
@@ -84,10 +435,33 @@ sub _attrib_expand_preferred_anchor_line ( $self, $line ) {
     push @out, $indent . '<a ' . $first;
 
     while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
+      my $attr = shift @attrs;
+      push @out,
+          $self->_attrib_emit_attr_or_style_block( $indent, $attr_step, $attr,
+                                                   0 );
     }
 
-    push @out, $indent . $attr_step . $attrs[0] . '>';
+    my $last_attr = $attrs[0];
+
+    if ( $last_attr =~ /^style="(.*)"$/s ) {
+      my $style = $1;
+      my @decls = _attrib_split_style_declarations( $style );
+
+      if ( @decls ) {
+        $out[-1] .= ' style="';
+        for my $i ( 0 .. $#decls ) {
+          my $line = $indent . $attr_step . $decls[$i];
+          $line .= '">' if $i == $#decls;
+          push @out, $line;
+        }
+      }
+      else {
+        push @out, $indent . $attr_step . $last_attr . '>';
+      }
+    }
+    else {
+      push @out, $indent . $attr_step . $last_attr . '>';
+    }
   }
   else {
     push @out, $indent . '<a ' . $first . '>';
@@ -116,6 +490,7 @@ sub _attrib_expand_preferred_button_line ( $self, $line ) {
 
   my @attrs = _attrib_split_html_attributes( $attrs );
   return undef unless @attrs;
+  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
 
   my @out;
   my $first     = shift @attrs;
@@ -126,10 +501,33 @@ sub _attrib_expand_preferred_button_line ( $self, $line ) {
     push @out, $indent . '<button ' . $first;
 
     while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
+      my $attr = shift @attrs;
+      push @out,
+          $self->_attrib_emit_attr_or_style_block( $indent, $attr_step, $attr,
+                                                   0 );
     }
 
-    push @out, $indent . $attr_step . $attrs[0] . '>';
+    my $last_attr = $attrs[0];
+
+    if ( $last_attr =~ /^style="(.*)"$/s ) {
+      my $style = $1;
+      my @decls = _attrib_split_style_declarations( $style );
+
+      if ( @decls ) {
+        $out[-1] .= ' style="';
+        for my $i ( 0 .. $#decls ) {
+          my $line = $indent . $attr_step . $decls[$i];
+          $line .= '">' if $i == $#decls;
+          push @out, $line;
+        }
+      }
+      else {
+        push @out, $indent . $attr_step . $last_attr . '>';
+      }
+    }
+    else {
+      push @out, $indent . $attr_step . $last_attr . '>';
+    }
   }
   else {
     push @out, $indent . '<button ' . $first . '>';
@@ -250,9 +648,10 @@ sub _attrib_expand_preferred_multiline_anchor_chunk ( $self, $chunk ) {
 
   return undef unless $joined =~ /^<a\b(.*)>\s*$/i;
   my $attrs = $1;
-
   my @attrs = _attrib_split_html_attributes( $attrs );
   return undef unless @attrs;
+
+  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
 
   my $step      = ' ' x $self->{indent_width};
   my $attr_step = $step . $step;
@@ -337,6 +736,8 @@ sub _attrib_expand_preferred_multiline_button_chunk ( $self, $chunk ) {
 
   my @attrs = _attrib_split_html_attributes( $attrs );
   return undef unless @attrs;
+
+  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
 
   my $step      = ' ' x $self->{indent_width};
   my $attr_step = $step . $step;
@@ -425,7 +826,10 @@ sub _attrib_format_inline_style_block ( $self, $lines, $base, $step ) {
   my ( $kind, $style_close, $content, $closing_tag ) =
       _attrib_split_inline_style_tail( $last );
 
-  push @out, ( $step x $base ) . shift @trimmed;
+  my $first = shift @trimmed;
+  push @out, ( $step x $base ) . $first;
+
+  $out[-1] .= ' style="' unless $out[-1] =~ /\bstyle="\s*$/;
 
   for my $line ( @trimmed ) {
     push @out, ( $step x ( $base + $style_body_levels ) ) . $line;
@@ -442,23 +846,38 @@ sub _attrib_format_inline_style_block ( $self, $lines, $base, $step ) {
     }
     else {
       push @out, ( $step x $base ) . $style_close;
+
     }
     return @out;
   }
 
   if ( $kind eq 'style_close_on_declaration' ) {
     push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+
     return @out;
   }
 
   if ( $kind eq 'closing_tag_only' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+    if ( @out ) {
+
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+
+    }
     push @out, ( $step x $base ) . $closing_tag if defined $closing_tag;
     return @out;
   }
 
   if ( $kind eq 'text_and_closing_tag' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+
+    }
     push @out, ( $step x ( $base + 1 ) ) . $content
         if defined $content && length $content;
     push @out, ( $step x $base ) . $closing_tag
@@ -472,18 +891,22 @@ sub _attrib_format_inline_style_block ( $self, $lines, $base, $step ) {
     }
     else {
       push @out, ( $step x $base ) . $style_close;
+
     }
     push @out, ( $step x $base ) . $closing_tag
         if defined $closing_tag && length $closing_tag;
+
     return @out;
   }
 
   if ( $kind eq 'bare_close_text_and_closing_tag' ) {
     if ( @out ) {
       $out[-1] .= $style_close;
+
     }
     else {
       push @out, ( $step x $base ) . $style_close;
+
     }
     push @out, ( $step x ( $base + 1 ) ) . $content
         if defined $content && length $content;
@@ -530,7 +953,24 @@ sub _attrib_is_multiline_tag_start_line ( $line ) {
   return 0 unless defined $line;
   return 0 if $line =~ /^\s*<%/;
   return 0 if _attrib_is_inline_style_start_line( $line );
+
   return $line =~ /^\s*<[^\/!][^>]*$/ ? 1 : 0;
+}
+
+sub _attrib_normalize_style_attr ( $attr ) {
+  return '' unless defined $attr;
+
+  $attr =~ s/^\s+//;
+  $attr =~ s/\s+$//;
+
+  if ( $attr =~ /^style="(.*)"$/s ) {
+    my $style = $1;
+    $style =~ s/^\s+//;
+    $style =~ s/\s+$//;
+    return qq{style="$style"};
+  }
+
+  return $attr;
 }
 
 sub _attrib_split_html_attributes ( $attr_text ) {
@@ -599,6 +1039,7 @@ sub _attrib_split_inline_style_tail ( $line ) {
 }
 
 sub _attrib_split_style_declarations ( $style ) {
+
   return () unless defined $style && length $style;
 
   my @parts = split /;/, $style;
@@ -650,12 +1091,12 @@ sub _base_apply_basic_indentation ( $self, $text ) {
     if ( $in_inline_style_block ) {
       push @inline_style_lines, $line;
 
-      if ( _attrib_is_inline_style_end_line( $trimmed ) ) {
+      if ( _base_is_inline_style_end_line( $trimmed ) ) {
         my $tail_has_closing_tag =
-            _attrib_inline_style_tail_has_closing_tag( $trimmed );
+            _base_inline_style_tail_has_closing_tag( $trimmed );
 
         push @out,
-            $self->_attrib_format_inline_style_block( \@inline_style_lines,
+            $self->_base_preserve_inline_style_block( \@inline_style_lines,
                                                    $inline_style_base, $step, );
 
         $level-- if $tail_has_closing_tag && $level > 0;
@@ -687,8 +1128,8 @@ sub _base_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    if ( _attrib_is_inline_style_start_line( $trimmed ) ) {
-      my $tag = _attrib_inline_style_tag_name( $trimmed );
+    if ( _base_is_inline_style_start_line( $trimmed ) ) {
+      my $tag = _base_inline_style_tag_name( $trimmed );
 
       $in_inline_style_block = 1;
       $inline_style_base     = $level + $ep_level;
@@ -732,17 +1173,23 @@ sub _base_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    if ( _attrib_is_multiline_tag_start_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
+    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
 
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
+      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
 
       $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $level + _base_effective_ep_indent( $ep_level );
+      $multiline_tag_base    = $depth;
       $multiline_tag_opens =
-          ( defined $tag
+          (    defined $tag
+            && $tag !~ /\Aspan\z/i
             && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
           ? 1
           : 0;
@@ -811,13 +1258,28 @@ sub _base_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    if ( _attrib_is_multiline_tag_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
+    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+
+      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
 
       $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $level + _base_effective_ep_indent( $ep_level );
+      $multiline_tag_base    = $depth;
+      $multiline_tag_opens =
+          (    defined $tag
+            && $tag !~ /\Aspan\z/i
+            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
+          ? 1
+          : 0;
+
+      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
 
       next;
     }
@@ -870,19 +1332,46 @@ sub _base_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
+    #     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
+    #       $level-- if $level > 0;
+    #       push @out,
+    #           ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
+    #           . $trimmed;
+    #       next;
+    #     }
+
     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
+      my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
+
       $level-- if $level > 0;
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
       next;
     }
 
     if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $level++;
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+      warn "PURE_OPEN tag=<$tag> line=<$trimmed>\n"
+          if defined $tag && $tag =~ /\Aspan\z/i;
+
+      my $depth = $level + _base_effective_ep_indent( $ep_level );
+      $depth -= _base_visual_indent_adjust_for_tag( $tag );
+
+      $depth = 0 if $depth < 0;
+
+      push @out, ( $step x $depth ) . $trimmed;
+      my $is_source_view_span =
+             defined $tag
+          && $tag =~ /\Aspan\z/i
+          && $trimmed =~
+          /\bclass="html-(?:tag|attribute-name|attribute-value|doctype)"/;
+
+      $level++ unless $is_source_view_span;
       next;
     }
 
@@ -1043,6 +1532,109 @@ sub _base_ep_opens_after ( $line ) {
   return $line =~ /^\s*%.*\{\s*$/ ? 1 : 0;
 }
 
+sub _base_format_inline_style_block ( $self, $lines, $base, $step ) {
+  my @out;
+  return @out unless $lines && @$lines;
+
+  my @trimmed = map {
+    my $x = $_;
+    $x =~ s/^\s+//;
+    $x =~ s/\s+$//;
+    $x;
+  } @$lines;
+
+  return ( ( $step x $base ) . $trimmed[0] ) if @trimmed == 1;
+
+  my $tag = _attrib_inline_style_block_tag_name( $trimmed[0] );
+
+  my $style_body_levels = 2;
+  $style_body_levels = 1 if defined $tag && $tag =~ /\Abutton\z/i;
+
+  my $last = pop @trimmed;
+  my ( $kind, $style_close, $content, $closing_tag ) =
+      _attrib_split_inline_style_tail( $last );
+
+  push @out, ( $step x $base ) . shift @trimmed;
+
+  for my $line ( @trimmed ) {
+    push @out, ( $step x ( $base + $style_body_levels ) ) . $line;
+  }
+
+  if ( !defined $kind ) {
+    push @out, ( $step x ( $base + $style_body_levels ) ) . $last;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_only' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x $base ) . $style_close;
+    }
+    return @out;
+  }
+
+  if ( $kind eq 'style_close_on_declaration' ) {
+    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+    return @out;
+  }
+
+  if ( $kind eq 'closing_tag_only' ) {
+    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+    push @out, ( $step x $base ) . $closing_tag if defined $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'text_and_closing_tag' ) {
+    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
+    push @out, ( $step x ( $base + 1 ) ) . $content
+        if defined $content && length $content;
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_closing_tag' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x $base ) . $style_close;
+    }
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
+  }
+
+  if ( $kind eq 'bare_close_text_and_closing_tag' ) {
+    if ( @out ) {
+      $out[-1] .= $style_close;
+    }
+    else {
+      push @out, ( $step x $base ) . $style_close;
+    }
+    push @out, ( $step x ( $base + 1 ) ) . $content
+        if defined $content && length $content;
+    push @out, ( $step x $base ) . $closing_tag
+        if defined $closing_tag && length $closing_tag;
+    return @out;
+  }
+
+  return @out;
+}
+
+sub _base_inline_style_tag_name ( $line ) {
+  return unless defined $line;
+  my ( $tag ) = $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
+  return $tag;
+}
+
+sub _base_inline_style_tail_has_closing_tag ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /<\/[A-Za-z][A-Za-z0-9:_-]*>\s*$/ ? 1 : 0;
+}
+
 sub _base_is_doctype_line ( $line ) {
   return $line =~ /^\s*<!DOCTYPE\b/i ? 1 : 0;
 }
@@ -1090,6 +1682,23 @@ sub _base_is_html_root_close_line ( $line ) {
 sub _base_is_html_root_open_line ( $line ) {
   return 0 unless defined $line;
   return $line =~ /^\s*<html>\s*$/i ? 1 : 0;
+}
+
+sub _base_is_inline_style_start_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /^\s*<[A-Za-z][A-Za-z0-9:_-]*\b.*\bstyle="\s*$/ ? 1 : 0;
+}
+
+sub _base_is_inline_style_end_line ( $line ) {
+  return 0 unless defined $line;
+  return $line =~ /">\s*$/ || $line =~ /">.*$/;
+}
+
+sub _base_is_multiline_tag_start_line ( $line ) {
+  return 0 unless defined $line;
+  return 0 if $line =~ /^\s*<%/;
+  return 0 if _attrib_is_inline_style_start_line( $line );
+  return $line =~ /^\s*<[^\/!][^>]*$/ ? 1 : 0;
 }
 
 sub _base_is_mixed_inline_html_line ( $line ) {
@@ -1226,12 +1835,159 @@ sub _base_percent_indent ( $line ) {
   return defined $1 ? length( $1 ) : 0;
 }
 
+sub _base_preprocess_maxchars ( $self, $text ) {
+  return $text unless defined $text && length $text;
+  return $text unless $self->{maxchars};
+
+  my @lines = split /\n/, $text, -1;
+
+  for my $line ( @lines ) {
+
+    # 1. visual-block split on large whitespace gaps
+    $line =~ s/>\s{3,}(?=<)/>\n\n\n/g;
+
+    if ( $self->{maxchars} > 1 ) {
+
+      # 2. split on ordinary inter-tag whitespace
+      if ( length( $line ) > $self->{maxchars} ) {
+        $line =~ s/>\s+(?=<)/>\n/g;
+      }
+
+      # 3. final hard fallback: split on direct tag seams
+      if ( length( $line ) > $self->{maxchars} ) {
+        $line =~ s/>(?=<)/>\n/g;
+      }
+    }
+  }
+
+  $text = join "\n", @lines;
+
+  $text = $self->_base_preprocess_maxchars_collapse_trivial_pairs( $text )
+      if $self->{maxchars} > 1;
+  return $text;
+}
+
+sub _base_preprocess_maxchars_collapse_trivial_pairs ( $self, $text ) {
+  return $text unless defined $text && length $text;
+
+  my @lines = split /\n/, $text, -1;
+  my @out;
+  my $i = 0;
+
+  while ( $i <= $#lines ) {
+    my $line = $lines[$i];
+
+    if ( $i < $#lines ) {
+      my $next = $lines[ $i + 1 ];
+
+      if ( $line =~ /^(\s*<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?>)\s*$/ ) {
+        my ( $open, $tag ) = ( $1, $2 );
+
+        if ( $tag =~ /\A(?:table|tbody|thead|tfoot|tr)\z/i ) {
+          push @out, $line;
+          $i++;
+          next;
+        }
+
+        if ( $next =~ /^\s*(<\/\Q$tag\E>)\s*$/ ) {
+          my $close  = $1;
+          my $joined = $open . $close;
+
+          if (   !$self->{maxchars}
+               || $self->{maxchars} == 1
+               || length( $joined ) <= $self->{maxchars} )
+          {
+            push @out, $joined;
+            $i += 2;
+            next;
+          }
+        }
+      }
+    }
+
+    push @out, $line;
+    $i++;
+  }
+
+  return join "\n", @out;
+}
+
+sub _base_preserve_inline_style_block ( $self, $lines, $base, $step ) {
+  return () unless $lines && @$lines;
+
+  my @raw = @$lines;
+
+  my @lead = map {
+    my ( $ws ) = $_ =~ /^(\s*)/;
+    length( $ws // '' );
+  } grep { defined $_ && length $_ } @raw;
+
+  my $common = @lead ? $lead[0] : 0;
+  for my $n ( @lead ) {
+    $common = $n if $n < $common;
+  }
+
+  my @out;
+  for my $line ( @raw ) {
+    my $x = $line;
+    $x =~ s/^\s{$common}// if $common > 0;
+    push @out, ( $step x $base ) . $x;
+  }
+
+  return @out;
+}
+
+sub _base_split_inline_style_tail ( $line ) {
+  return unless defined $line;
+
+  my $trimmed = $line;
+  $trimmed =~ s/^\s+//;
+  $trimmed =~ s/\s+$//;
+
+  # final declaration + close + text + closing tag
+  if ( $trimmed =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'text_and_closing_tag', $1, $2, $3 );
+  }
+
+  # final declaration + close + closing tag
+  if ( $trimmed =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'closing_tag_only', $1, undef, $2 );
+  }
+
+  # bare close + text + closing tag
+  if ( $trimmed =~ /^">([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'bare_close_text_and_closing_tag', '">', $1, $2 );
+  }
+
+  # bare close + closing tag
+  if ( $trimmed =~ /^">(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
+    return ( 'bare_close_closing_tag', '">', undef, $1 );
+  }
+
+  # final declaration already ends with ">
+  if ( $trimmed =~ /^(.*;">)\s*$/ ) {
+    return ( 'style_close_on_declaration', $1, undef, undef );
+  }
+
+  # bare dangling close-only line
+  if ( $trimmed =~ /^">\s*$/ ) {
+    return ( 'bare_close_only', '">', undef, undef );
+  }
+
+  return;
+}
+
 sub _base_strip_trailing_whitespace ( $self, $text ) {
   $text = '' unless defined $text;
 
   $text =~ s/[ \t]+$//mg;
 
   return $text;
+}
+
+sub _base_visual_indent_adjust_for_tag ( $tag ) {
+  return 1 if defined $tag && $tag =~ /\A(?:table|tbody)\z/i;
+  return 0;
 }
 
 ############################
@@ -1369,7 +2125,6 @@ sub _cols_expand_long_generic_opening_tag ( $self, $line ) {
   while ( @attrs > 1 ) {
     push @out, $indent . $attr_step . shift @attrs;
   }
-
   push @out, $indent . $attr_step . $attrs[0] . '>';
 
   return join "\n", @out;
@@ -1397,6 +2152,7 @@ sub _cols_expand_long_inline_style_tag ( $self, $line ) {
   return undef unless @decls >= 2;
 
   my @out;
+
   push @out, $indent . $before;
   push @out, map { $indent . $_ } @decls;
   $out[-1] .= $after;

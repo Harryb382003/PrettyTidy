@@ -798,4 +798,73 @@ JSON
       'relative outdir file contains tidied content';
 };
 
+subtest '--attributes enables hanging attribute layout' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $path   = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+
+  spurt( $path,
+         "<div>\n" . "<form method=\"post\" action=\"/x\">\n" . "</form>\n" );
+
+  my $r = run_isolated(tmpdir => $tmpdir,
+                       argv => [ $^X, '-Ilib', $script, '--attributes', $path ],
+  );
+
+  is $r->{exit}, 0, '--attributes exits 0';
+
+  my $expected = join "\n",
+      "<div>",
+      '  <form method="post"',
+      '      action="/x">',
+      '  </form>',
+      '';
+
+  is $r->{stdout}, $expected, '--attributes changes formatting';
+};
+
+subtest 'config attributes true enables hanging layout' => sub {
+  my $tmpdir = tempdir( CLEANUP => 1 );
+  my $cfg    = File::Spec->catfile( $tmpdir, 'pt.json' );
+  my $infile = File::Spec->catfile( $tmpdir, 'one.html.ep' );
+
+  spurt( $infile, "<div>\n<form method=\"post\" action=\"/x\">\n</form>\n" );
+
+  spurt(
+    $cfg,
+    <<'JSON'
+  {
+    "attributes": true
+  }
+JSON
+  );
+
+  my $r = run_isolated(
+                   tmpdir => $tmpdir,
+                   argv => [ $^X, '-Ilib', $script, '--config', $cfg, $infile ],
+  );
+
+  my $expected = join "\n",
+      "<div>",
+      '  <form method="post"',
+      '      action="/x">',
+      '  </form>',
+      '';
+
+  is $r->{exit},   0,         'config attributes run exits 0';
+  is $r->{stdout}, $expected, 'config enables hanging layout';
+};
+
 done_testing;
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
