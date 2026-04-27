@@ -179,9 +179,6 @@ sub _attrib_apply_basic_indentation ( $self, $text ) {
     if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
 
-      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
-
       my $depth = $level + _base_effective_ep_indent( $ep_level );
       $depth -= _base_visual_indent_adjust_for_tag( $tag );
       $depth = 0 if $depth < 0;
@@ -264,9 +261,6 @@ sub _attrib_apply_basic_indentation ( $self, $text ) {
     if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
 
-      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
-
       my $depth = $level + _base_effective_ep_indent( $ep_level );
       $depth -= _base_visual_indent_adjust_for_tag( $tag );
       $depth = 0 if $depth < 0;
@@ -337,23 +331,12 @@ sub _attrib_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    #     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
-    #       $level-- if $level > 0;
-    #       push @out,
-    #           ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-    #           . $trimmed;
-    #       next;
-    #     }
-
     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
 
       $level-- if $level > 0;
 
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-
-      $depth = 0 if $depth < 0;
+      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
 
       push @out, ( $step x $depth ) . $trimmed;
       next;
@@ -361,8 +344,6 @@ sub _attrib_apply_basic_indentation ( $self, $text ) {
 
     if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-      warn "PURE_OPEN tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
 
       my $depth = $level + _base_effective_ep_indent( $ep_level );
       $depth -= _base_visual_indent_adjust_for_tag( $tag );
@@ -1176,9 +1157,6 @@ sub _base_apply_basic_indentation ( $self, $text ) {
     if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
 
-      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
-
       my $depth = $level + _base_effective_ep_indent( $ep_level );
       $depth -= _base_visual_indent_adjust_for_tag( $tag );
       $depth = 0 if $depth < 0;
@@ -1261,9 +1239,6 @@ sub _base_apply_basic_indentation ( $self, $text ) {
     if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
 
-      warn "MLTAG tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
-
       my $depth = $level + _base_effective_ep_indent( $ep_level );
       $depth -= _base_visual_indent_adjust_for_tag( $tag );
       $depth = 0 if $depth < 0;
@@ -1316,9 +1291,18 @@ sub _base_apply_basic_indentation ( $self, $text ) {
     }
 
     if ( _base_is_mixed_inline_html_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
+      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
+
+      my $depth;
+      if ( defined $tag && $tag =~ /\Atd\z/i ) {
+        $depth = $level + _base_effective_ep_indent( $ep_level ) - 1;
+        $depth = 0 if $depth < 0;
+      }
+      else {
+        $depth = $level + _base_effective_ep_indent( $ep_level );
+      }
+
+      push @out, ( $step x $depth ) . $trimmed;
       next;
     }
 
@@ -1332,23 +1316,12 @@ sub _base_apply_basic_indentation ( $self, $text ) {
       next;
     }
 
-    #     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
-    #       $level-- if $level > 0;
-    #       push @out,
-    #           ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-    #           . $trimmed;
-    #       next;
-    #     }
-
     if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
 
       $level-- if $level > 0;
 
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-
-      $depth = 0 if $depth < 0;
+      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
 
       push @out, ( $step x $depth ) . $trimmed;
       next;
@@ -1356,13 +1329,8 @@ sub _base_apply_basic_indentation ( $self, $text ) {
 
     if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
       my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-      warn "PURE_OPEN tag=<$tag> line=<$trimmed>\n"
-          if defined $tag && $tag =~ /\Aspan\z/i;
 
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-
-      $depth = 0 if $depth < 0;
+      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
 
       push @out, ( $step x $depth ) . $trimmed;
       my $is_source_view_span =
@@ -1988,6 +1956,26 @@ sub _base_strip_trailing_whitespace ( $self, $text ) {
 sub _base_visual_indent_adjust_for_tag ( $tag ) {
   return 1 if defined $tag && $tag =~ /\A(?:table|tbody)\z/i;
   return 0;
+}
+
+sub _base_visual_indent_for_open_tag ( $tag, $level, $ep_level ) {
+  my $depth = $level + _base_effective_ep_indent( $ep_level );
+
+  if ( defined $tag && $tag =~ /\A(?:table|tbody)\z/i ) {
+    $depth-- if $depth > 0;
+  }
+
+  return $depth;
+}
+
+sub _base_visual_indent_for_close_tag ( $tag, $level, $ep_level ) {
+  my $depth = $level + _base_effective_ep_indent( $ep_level );
+
+  if ( defined $tag && $tag =~ /\A(?:table|tbody)\z/i ) {
+    $depth-- if $depth > 0;
+  }
+
+  return $depth;
 }
 
 ############################
