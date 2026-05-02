@@ -19,6 +19,7 @@ my $attributes         = 0;
 my $backup             = 0;
 my $backup_ext         = '.bak';
 my $check              = 0;
+my $cli_sourceview_set = 0;
 my $config_path        = '.mojo-prettytidy.json';
 my $cli_attributes_set = 0;
 my $cli_maxchars_set   = 0;
@@ -33,6 +34,7 @@ my $maxchars           = 0;
 my $outdir             = '';
 my $output_path        = '';
 my $prefix             = '';
+my $sourceview         = 0;
 my $stdin              = 0;
 my $version            = 0;
 my $write              = 0;
@@ -62,6 +64,10 @@ GetOptions(
   'prefix|pre=s' => sub ( $opt, $val ) {
     $prefix         = $val;
     $cli_prefix_set = 1;
+  },
+  'source|sourceview|source-view' => sub {
+    $sourceview         = 1;
+    $cli_sourceview_set = 1;
   },
   'stdin'     => \$stdin,
   'version|v' => \$version,
@@ -155,7 +161,8 @@ my $pt = Mojo::PrettyTidy->new(
 #                                 ),
   ( $columns    ? ( columns    => $columns )  : () ),
   ( $attributes ? ( attributes => 1 )         : () ),
-  ( $maxchars   ? ( maxchars   => $maxchars ) : () ), );
+  ( $maxchars   ? ( maxchars   => $maxchars ) : () ),
+  ( $sourceview ? ( sourceview => 1 )         : () ), );
 
 if ( $stdin ) {
   my $input  = do { local $/; <STDIN> };

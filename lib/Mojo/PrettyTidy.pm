@@ -13,15 +13,20 @@ sub new ( $class, %args ) {
           columns      => defined $args{columns}      ? $args{columns}      : 0,
           attributes   => defined $args{attributes}   ? $args{attributes}   : 0,
           maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
+          sourceview   => defined $args{sourceview}   ? $args{sourceview}   : 0,
   }, $class;
 
   return $self;
 }
 
 sub tidy ( $self, $input ) {
-  my $text = defined $input ? $input : '';
+  my $text            = defined $input ? $input : '';
+  my $sourceview_mode = $self->{sourceview}
+      || _base_looks_like_saved_source_view( $text );
 
-  $text = $self->_base_preprocess_maxchars( $text ) if $self->{maxchars};
+  $text = $self->_base_preprocess_maxchars( $text )
+      if $self->{maxchars}
+      || $sourceview_mode;
 
   $text = $self->_base_normalize_line_endings( $text );
   $text = $self->_base_strip_trailing_whitespace( $text );
@@ -1780,6 +1785,13 @@ sub _base_line_indent ( $line ) {
   return 0 unless defined $line;
   $line =~ /^(\s*)/;
   return length( $1 // '' );
+}
+
+sub _base_looks_like_saved_source_view ( $text ) {
+  return 0 unless defined $text && length $text;
+
+  return 1 if $text =~ /\A<!--\s*saved from url=/i;
+  return 0;
 }
 
 sub _base_normalize_line_endings ( $self, $text ) {
