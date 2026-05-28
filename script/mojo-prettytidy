@@ -89,8 +89,7 @@ my $cfg = {};
 if ( $cli_config_set ) {
   $cfg = _load_config_file( $config_path );
   _validate_config( $cfg, $config_path );
-}
-elsif ( -f $config_path ) {
+} elsif ( -f $config_path ) {
   $cfg = _load_config_file( $config_path );
   _validate_config( $cfg, $config_path );
 }
@@ -100,6 +99,9 @@ $attributes = $cfg->{attributes}
 
 $maxchars = $cfg->{maxchars}
     if exists $cfg->{maxchars} && !$cli_maxchars_set;
+
+$sourceview = $cfg->{sourceview}
+    if exists $cfg->{sourceview} && !$cli_sourceview_set;
 
 $outdir = $cfg->{outdir}
     if exists $cfg->{outdir} && !$cli_outdir_set;
@@ -149,6 +151,9 @@ pod2usage( "--stdin cannot be combined with --backup\n" )
 pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
     if $stdin && @inputs;
 
+pod2usage( "--maxchars requires --source-view\n" )
+    if $maxchars && !$sourceview;
+
 my $pt = Mojo::PrettyTidy->new(
 
 #                                 (
@@ -165,7 +170,9 @@ my $pt = Mojo::PrettyTidy->new(
   ( $sourceview ? ( sourceview => 1 )         : () ), );
 
 if ( $stdin ) {
-  my $input  = do { local $/; <STDIN> };
+  my $input = do { local $/; <STDIN> };
+  _warn_long_lines( $input, 'STDIN', $sourceview ) if !$maxchars;
+  $pt->debug_perltidy_file_name( 'stdin' );
   my $output = $pt->tidy( $input );
 
   if ( $check ) {
@@ -202,10 +209,13 @@ pod2usage( "multiple inputs require --write, --prefix, or --outdir\n" )
 
 _ensure_outdir( $outdir ) if length $outdir;
 
-# preserve old single-file behavior when no multi-output mode is requested
+# single-file mode
 if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
-  my $file   = $files[0];
-  my $input  = _slurp( $file );
+  my $file  = $files[0];
+  my $input = _slurp( $file );
+  _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
+
+  $pt->debug_perltidy_file_name( $file );
   my $output = $pt->tidy( $input );
   if ( $check ) {
     exit( $output eq $input ? 0 : 1 );
@@ -248,7 +258,9 @@ if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
 
 # multi-file / directory mode
 for my $file ( @files ) {
-  my $input  = _slurp( $file );
+  my $input = _slurp( $file );
+  _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
+  $pt->debug_perltidy_file_name( $file );
   my $output = $pt->tidy( $input );
 
   if ( $write ) {
@@ -298,6 +310,23 @@ sub _collect_input_files ( @inputs ) {
   return @files;
 }
 
+sub _ensure_outdir ( $dir ) {
+  return unless length $dir;
+  return if -d $dir;
+  mkdir $dir or die "Cannot create output directory '$dir': $!";
+}
+
+sub _has_directory_input ( @inputs ) {
+  for my $path ( @inputs ) {
+    return 1 if -d $path;
+  }
+  return 0;
+}
+
+sub _is_template_file ( $path ) {
+  return $path =~ /\.html\.ep\z/ ? 1 : 0;
+}
+
 sub _load_config_file ( $path ) {
   open my $fh, '<', $path or die "Cannot open config '$path' for reading: $!";
   local $/;
@@ -310,68 +339,6 @@ sub _load_config_file ( $path ) {
       unless ref( $cfg ) eq 'HASH';
 
   return $cfg;
-}
-
-sub _validate_config ( $cfg, $path ) {
-  my %allowed = map { $_ => 1 } qw(
-      indent_width
-      tab_width
-      prefix
-      outdir
-      columns
-      attributes
-      maxchars
-  );
-
-  for my $k ( keys %$cfg ) {
-    die "Unknown config key '$k' in '$path'\n"
-        unless $allowed{$k};
-  }
-
-  if ( exists $cfg->{indent_width} ) {
-    die "Config key 'indent_width' in '$path' must be a positive integer\n"
-        unless defined( $cfg->{indent_width} )
-        && $cfg->{indent_width} =~ /\A[1-9][0-9]*\z/;
-  }
-
-  if ( exists $cfg->{tab_width} ) {
-    die "Config key 'tab_width' in '$path' must be a positive integer\n"
-        unless defined( $cfg->{tab_width} )
-        && $cfg->{tab_width} =~ /\A[1-9][0-9]*\z/;
-  }
-
-  if ( exists $cfg->{prefix} ) {
-    die "Config key 'prefix' in '$path' must be a string\n"
-        if ref( $cfg->{prefix} );
-  }
-
-  if ( exists $cfg->{outdir} ) {
-    die "Config key 'outdir' in '$path' must be a string\n"
-        if ref( $cfg->{outdir} );
-  }
-
-  if ( exists $cfg->{columns} ) {
-    die "Config key 'columns' in '$path' must be a positive integer\n"
-        unless defined( $cfg->{columns} )
-        && $cfg->{columns} =~ /\A[1-9][0-9]*\z/;
-  }
-}
-
-sub _is_template_file ( $path ) {
-  return $path =~ /\.html\.ep\z/ ? 1 : 0;
-}
-
-sub _ensure_outdir ( $dir ) {
-  return unless length $dir;
-  return if -d $dir;
-  mkdir $dir or die "Cannot create output directory '$dir': $!";
-}
-
-sub _has_directory_input ( @inputs ) {
-  for my $path ( @inputs ) {
-    return 1 if -d $path;
-  }
-  return 0;
 }
 
 sub _output_path_for ( $input, $prefix, $outdir ) {
@@ -406,11 +373,25 @@ sub _validate_config ( $cfg, $path ) {
       outdir
       columns
       attributes
+      maxchars
+      sourceview
   );
 
   for my $k ( keys %$cfg ) {
     die "Unknown config key '$k' in '$path'\n"
         unless $allowed{$k};
+  }
+
+  if ( exists $cfg->{sourceview} ) {
+    my $v = $cfg->{sourceview};
+
+    die
+"Config key 'sourceview' in '$path' must be boolean or a positive integer\n"
+        if ref( $v ) eq 'HASH' || ref( $v ) eq 'ARRAY';
+
+    die
+"Config key 'sourceview' in '$path' must be boolean or a positive integer\n"
+        unless ref( $v ) || $v =~ /\A(?:0|1|[1-9][0-9]*)\z/;
   }
 
   if ( exists $cfg->{maxchars} ) {
@@ -423,6 +404,28 @@ sub _validate_config ( $cfg, $path ) {
     die
 "Config key 'maxchars' in '$path' must be boolean or a positive integer\n"
         unless ref( $v ) || $v =~ /\A(?:0|1|[1-9][0-9]*)\z/;
+  }
+}
+
+sub _warn_long_lines ( $text, $label = '', $sourceview = 0 ) {
+  return unless defined $text && length $text;
+
+  my $warn_threshold = 10000;
+
+  for my $line ( split /\n/, $text, -1 ) {
+    next unless length( $line ) > $warn_threshold;
+
+    my $where = length( $label ) ? " in '$label'" : '';
+
+    if ( $sourceview ) {
+      warn
+"input$where contains very long lines; consider --source-view --maxchars or --source-view --maxchars N for readability\n";
+    } else {
+      warn
+"input$where contains very long lines and may be machine-generated or editor-hostile\n";
+    }
+
+    last;
   }
 }
 

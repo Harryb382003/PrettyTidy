@@ -11,3 +11,11 @@ mojo_prettytidy_cpan_quality_notes.txt
 .mojo_prettytidy_cpan_quality_notes.txt
 share/samples/debug.html.ep
 share/samples/sample_1_stripped.html.ep
+./lib/Mojo/PrettyTidy-0.pm
+share/samples/debug_from_mojo.html.ep
+share/samples/debug_from_mojo.html.ep
+share/samples/debug_from_mojo.html.ep
+share/samples/happy_fappy.html.ep
+share/samples/modern_js_fixture.html.ep
+lib/Mojo/PrettyTidy-0.pm
+share/samples/testing

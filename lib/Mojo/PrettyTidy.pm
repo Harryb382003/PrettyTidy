@@ -1,8 +1,10 @@
 package Mojo::PrettyTidy;
 
 use v5.40.0;
-use common::sense;
 use feature 'signatures';
+
+use common::sense;
+use JavaScript::Beautifier qw/js_beautify/;
 
 our $VERSION = '0.01';
 
@@ -19,2422 +21,1347 @@ sub new ( $class, %args ) {
   return $self;
 }
 
-sub tidy ( $self, $input ) {
-  my $text            = defined $input ? $input : '';
-  my $sourceview_mode = $self->{sourceview}
-      || _base_looks_like_saved_source_view( $text );
+sub _chunks_from_flat ( $self, $text ) {
+  my @chunks;
 
-  $text = $self->_base_preprocess_maxchars( $text )
-      if $self->{maxchars}
-      || $sourceview_mode;
+  $text = $self->_early_breakpoints( $text );
 
-  $text = $self->_base_normalize_line_endings( $text );
-  $text = $self->_base_strip_trailing_whitespace( $text );
+  for my $line ( split /\n/, $text, -1 ) {
+    if ( $line =~ /^\s*$/ ) {
+      push @chunks, {kind => 'blank', text => ''};
+      next;
+    }
 
-  if ( $self->{attributes} ) {
-    $text = $self->_attrib_expand_preferred_elements( $text );
-    $text = $self->_attrib_expand_preferred_multiline_anchor_openers( $text );
-    $text = $self->_attrib_expand_preferred_multiline_button_openers( $text );
+    if ( $line =~ /^\s*<script\b/i || $line =~ /^\s*<\/script>/i ) {
+      push @chunks, {kind => 'script', text => $line};
+      next;
+    }
+
+    my $ep = $self->_ep_control( $line );
+
+    if ( defined $ep ) {
+      push @chunks, {kind => 'ep_control', text => $line, ep => $ep};
+      next;
+    }
+
+    push @chunks, {kind => 'html', text => $line};
   }
 
-  $text =
-        $self->{attributes}
-      ? $self->_attrib_apply_basic_indentation( $text )
-      : $self->_base_apply_basic_indentation( $text );
+  return @chunks;
+}
 
-  if ( $self->{columns} ) {
-    $text = $self->_cols_apply_column_expansion( $text );
-    $text =
-          $self->{attributes}
-        ? $self->_attrib_apply_basic_indentation( $text )
-        : $self->_base_apply_basic_indentation( $text );
-  }
+sub _compact_blank_runs ( $self, $text ) {
+  return '' unless defined $text && length $text;
 
-  $text = $self->_base_cohere_percent_clusters( $text );
-  $text = $self->_base_cohere_mixed_ep_micro_blocks( $text );
-  $text = $self->_base_ensure_final_newline( $text );
+  $text =~ s/\n{3,}/\n\n/g;
 
   return $text;
 }
 
-sub check ( $self, $input ) {
-  $input = '' unless defined $input;
-
-  my $output = $self->tidy( $input );
-  return $output eq $input ? 1 : 0;
+sub debug_perltidy_file_name ( $self, $file ) {
+  $self->{debug_perltidy_file_name} = $file if defined $file && length $file;
+  return $self;
 }
 
-############################
-#
-# --attrib operationa
-#
-############################
+sub debug_perltidy_write_file ( $self, $idx, $perl ) {
+  require File::Basename;
 
-sub _attrib_apply_basic_indentation ( $self, $text ) {
-  $text = '' unless defined $text;
+  my $dir = $self->_perltidy_ensure_tmp_dir;
 
-  my @lines = split /\n/, $text, -1;
-  my @out;
+  my $source = $self->{debug_perltidy_file_name} // 'unknown';
+  my $base   = File::Basename::basename( $source );
 
-  my $level                     = 0;
-  my $ep_level                  = 0;
-  my $step                      = ' ' x $self->{indent_width};
-  my $in_comment_block          = 0;
-  my $in_script_block           = 0;
-  my $in_style_block            = 0;
-  my $in_inline_style_block     = 0;
-  my $inline_style_base         = 0;
-  my $in_multiline_tag_open     = 0;
-  my $style_inner_level         = 0;
-  my $multiline_tag_base        = 0;
-  my $multiline_tag_opens       = 0;
-  my $multiline_tag_attr_levels = 1;
-  my @inline_style_lines;
+  $base =~ s/[^A-Za-z0-9_.-]+/_/g;
+
+  my $path = sprintf '%s/pt.%s_%03d.pl', $dir, $base, $idx;
+
+  open my $fh, '>', $path
+      or die "Cannot write perltidy debug input '$path': $!";
+
+  print {$fh} $perl;
+  close $fh;
+
+  return $path;
+}
+
+sub _early_breakpoints ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  # HTML comments are their own visible units. Multi-line comment bodies are
+  # otherwise left alone.
+  $text =~ s{\n*(<!--)}{\n$1}g;
+  $text =~ s{(-->)\n*}{$1\n}g;
+
+  # Split common block-ish tags that flattening glued together.
+  $text =~ s{>[
+\t]*(?=<(?:html|head|body|title|meta|link|script|style|div|form|label|input|option|
+button|table|thead|tbody|tr|td|th|ul|ol|li|section|article)\b)}{>\n}gi;
+  $text =~ s{(>)[\t]*(?=%\s*
+(?:if|elsif|else|unless|for|foreach|while|my|our|state|return|end)\b)}{$1\n}g;
+  $text =~ s{(</script>)[ \t]*(?=<)}{$1\n}gi;
+  $text =~ s{(</style>)[ \t]*(?=<)}{$1\n}gi;
+
+  # Closing tag glued to another tag or EP marker.
+  $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)[ \t]*(?=<|%)}{$1\n}g;
+
+  # Keep a closing table cell with the preceding inline close for now.
+  $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)\n(</td>)}{$1$2}g;
+
+  # EP statement immediately followed by another EP line.
+  $text =~ s/\;%/;\n%/g;
+
+  # EP comment glued to another EP line.
+  $text =~ s{(%\s*\#[^\n]*?)(?=%\s*)}{$1\n}gx;
+
+  # EP opener/transition glued to preceding payload.
+  $text =~ s{(?<!\n)(?=%\s*(?:if|unless|for|foreach|while)\b)}{\n}g;
+
+  # EP opener/transition glued to trailing payload.
+  $text =~
+s{(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=\S)}
+{$1\n}gx;
+
+  # EP begin glued to trailing template payload.
+  $text =~ s{ (%[=\s][^\n]*?\bbegin) (?=<[A-Za-z]) }{$1\n}gx;
+
+  # closing end when glued to HTML
+  $text =~ s{(?<!\n)(?=%\s*end\b)}{\n}g;
+  $text =~ s{(%\s*end\b)(?=<[A-Za-z])}{$1\n}g;
+
+  # EP closer glued to trailing payload. This intentionally catches both tags
+  # and text payload such as `% }&nbsp; ...` so the closer remains classifiable.
+  $text =~ s{(%\s*\})(?=\S)}{$1\n}gx;
+
+  # Before EP expression-output lines:
+  #   $text =~ s{(?<!\n)(?=%=)}{\n}gx;
+  $text =~ s{ (?<![\n<]) (?=%=) }{\n}gx;
+
+  # Before EP control/statement lines.
+
+  $text =~ s{
+    (?<!\n)
+    (?=%\s*(?:if|elsif|else|unless|for|foreach|while|my|our|state|return)\b)
+  }{\n}gx;
+
+  # Before standalone EP comments only. Do not touch inline trailing # comments.
+  $text =~ s{(?<!\n)(?=%\s*\#\s)}{\n}g;
+
+  # Before EP close/transition lines.
+  $text =~ s/(?<!\n)(?=%\s*\})/\n/g;
+
+  # EP statement/comment glued to an opening HTML tag.
+  $text =~ s{(^%\s*[^\n]*?;)(?=<!?[A-Za-z])}{$1\n}gmx;
+  $text =~ s{(%\s*(?:my|our|state|return)\b[^\n]*?;)(?=<[A-Za-z])}{$1\n\n}gx;
+  $text =~ s{(%\s*\#[^\n]*?;)(?=<[A-Za-z])}{$1\n\n}gx;
+
+  $text = $self->_isolate_script_blocks( $text );
+
+  #   $text = $self->_normalize_ep_multiline_deref_blocks( $text );
+
+  return $text;
+}
+
+sub _ep_control ( $self, $line ) {
+  return undef unless defined $line && length $line;
+
+  my $x = $line;
+  $x =~ s/^\s+//;
+  $x =~ s/\s+$//;
+
+  my $is_output_begin = $x =~ /^%=\s+.*\bbegin\s*\z/;
+
+  return undef if $x =~ /^%=/ && !$is_output_begin;
+
+  if ( $is_output_begin ) {
+    $x =~ s/^%=\s+// or return undef;
+  } else {
+    $x =~ s/^%\s+// or return undef;
+  }
+
+  return 'comment' if $x =~ /\A#/;
+  return 'closer'  if $x =~ /\A}\s*\z/;
+
+  return 'transition' if $x =~ /\A}\s*(?:else|elsif)\b.*\{\s*\z/;
+  return 'transition' if $x =~ /\A(?:else|elsif)\b.*\{\s*\z/;
+
+  return 'opener'
+      if $x =~ /\A(?:if|for|foreach|while|unless)\b.*\{\s*\z/
+      && $x !~ /\@\{\s*\z/;
+
+  #   return 'opener' if $x =~ /\A[^\n]*\}\)\s*\{\s*\z/;
+
+  return 'begin'     if $x =~ /\bbegin\s*\z/;
+  return 'end'       if $x =~ /\Aend\b\s*\z/;
+  return 'statement' if $x =~ /;\s*(?:#.*)?\z/;
+
+  # Fallback: a full-line EP marker is still Perl code, even when it is
+  # a continuation like:
+  #   % for my $line (@{
+  #   % }) {
+  return 'statement';
+}
+
+sub _ep_logical_perl_code ( $self, $code ) {
+  return '' unless defined $code && length $code;
+
+  # Flattened native multiline EP continuation inside @{ ... }:
+  #   @{% $foo% }) {
+  # should be understood, for Perl scanning only, as:
+  #   @{$foo}) {
+  #
+  # Normal one-line Perl like @{$foo} does not match this and is left alone.
+  $code =~ s!\@\{\s*%\s*!\@\{!g;
+  $code =~ s{\s*%\s*(?=\}\)\s*\{)}{}g;
+
+  return $code;
+}
+
+sub _flatten ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  $text =~ s/\r\n?/\n/g;
+
+  my @lines = split /\n/, $text;
 
   for my $line ( @lines ) {
-    my $trimmed = $line;
-    $trimmed =~ s/^\s+//;
-    $trimmed =~ s/\s+$//;
+    $line =~ s/^\s+//;
+    $line =~ s/\s+$//;
+  }
 
-    if ( $in_inline_style_block ) {
-      push @inline_style_lines, $line;
+  return join '', grep {length} @lines;
+}
 
-      if ( _attrib_is_inline_style_end_line( $trimmed ) ) {
-        my $tail_has_closing_tag =
-            _attrib_inline_style_tail_has_closing_tag( $trimmed );
+sub _html_separate_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
 
-        push @out,
-            $self->_attrib_format_inline_style_block( \@inline_style_lines,
-                                                   $inline_style_base, $step, );
+  my $block =
+      qr/(?:div|section|article|table|thead|tbody|tfoot|tr|td|th|ul|ol|p)/;
 
-        $level-- if $tail_has_closing_tag && $level > 0;
+  $text =~ s{(<$block\b[^>]*>)[ \t]*(?=<$block\b)}{$1\n}gi;
+  $text =~ s{(</$block>)[ \t]*(?=<$block\b)}{$1\n}gi;
+  $text =~ s{(</$block>)[ \t]*(?=</$block>)}{$1\n}gi;
 
-        @inline_style_lines    = ();
-        $in_inline_style_block = 0;
+  # Lists get a visual block break before them.
+  $text =~ s{(</$block>)[ \t]*\n?(<(?:ul|ol)\b[^>]*>)}{$1\n\n$2}gi;
+
+  # List items: break before each <li>, and after each </li>.
+  $text =~ s{(<(?:ul|ol)\b[^>]*>)[ \t]*(?=<li\b)}{$1\n}gi;
+  $text =~ s{(</li>)[ \t]*(?=<li\b)}{$1\n}gi;
+  $text =~ s{(</li>)[ \t]*(?=</(?:ul|ol)>)}{$1\n}gi;
+
+  # List items: put primary child anchors/divs on their own lines.
+  $text =~ s{(<li\b[^>]*>)[ \t]*(?=<(?:a|div)\b)}{$1\n}gi;
+
+  # Dropdown/menu anchors: one item per line.
+  $text =~ s{(<div\b[^>]*\bdropdown-menu\b[^>]*>)[ \t]*(?=<a\b)}{$1\n}gi;
+  $text =~ s{(</a>)[ \t]*(?=<a\b)}{$1\n}gi;
+  $text =~ s{(</a>)[ \t]*(?=<div\b[^>]*\bdropdown-divider\b)}{$1\n}gi;
+  $text =~ s{(</div>)[ \t]*(?=<a\b)}{$1\n}gi;
+
+  # Close list-item internals cleanly.
+  $text =~ s{(</a>)[ \t]*(?=</li>)}{$1\n}gi;
+  $text =~ s{(</div>)[ \t]*(?=</li>)}{$1\n}gi;
+
+  return $text;
+}
+
+sub _html_separate_landmarks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  # Top-level document landmarks.
+  $text =~ s{(<html\b[^>]*>)\n(<head\b[^>]*>)}{$1\n\n$2}gi;
+  $text =~ s{(</head>)\n(<body\b[^>]*>)}{$1\n\n$2}gi;
+
+  # Body/header/nav opening sequence.
+  $text =~ s{(<body\b[^>]*>)\n?(<header\b[^>]*>)}{$1\n$2}gi;
+  $text =~ s{(<header\b[^>]*>)\n?(<nav\b[^>]*\bnavbar\b[^>]*>)}{$1\n$2\n}gi;
+
+  # Brand/link block inside navbar.
+  $text =~
+s{(<nav\b[^>]*\bnavbar\b[^>]*>)\n?(<a\b[^>]*\bnavbar-brand\b[^>]*>)}{$1\n\n$2}gi;
+
+  # Main content landmark.
+  $text =~ s{(<div\b[^>]*>)\n(<main\b[^>]*>)}{$1\n\n$2}gi;
+
+  # Footer landmark.
+  $text =~ s{(</div>)\n(</div>)\n(<footer\b[^>]*>)}{$1\n$2\n\n$3}gi;
+
+  return $text;
+}
+
+sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @out;
+  my $level     = 0;
+  my $in_script = 0;
+  my $indent    = ' ' x $self->{indent_width};
+
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind   = $self->_ep_control( $line );
+    my $target = $level > 0 ? $indent x $level : '';
+
+    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+      $level-- if $level > 0;
+      $target = $level > 0 ? $indent x $level : '';
+    }
+
+    if ( $line =~ /^\s*<script\b/i ) {
+      if ( length $target ) {
+        $line =~ s/^\s*/$target/;
       }
 
-      next;
-    }
-
-    if ( $line =~ /^\s*$/ ) {
-      push @out, '';
-      next;
-    }
-
-    if ( $in_multiline_tag_open ) {
-      push @out,
-          ( $step x ( $multiline_tag_base + $multiline_tag_attr_levels ) )
-          . $trimmed;
-
-      if ( _base_is_tag_end_line( $trimmed ) ) {
-        $level++ if $multiline_tag_opens && $trimmed !~ /\/>\s*$/;
-        $in_multiline_tag_open     = 0;
-        $multiline_tag_opens       = 0;
-        $multiline_tag_attr_levels = 1;
-      }
+      $in_script = 1;
+      push @out, $line;
 
       next;
     }
 
-    if ( _attrib_is_inline_style_start_line( $trimmed ) ) {
-      my $tag = _attrib_inline_style_tag_name( $trimmed );
+    if ( $in_script ) {
+      if ( $line =~ m{^\s*</script>}i ) {
+        if ( length $target ) {
+          $line =~ s/^\s*/$target/;
+        }
 
-      $in_inline_style_block = 1;
-      $inline_style_base     = $level + $ep_level;
-      @inline_style_lines    = ( $line );
+        $in_script = 0;
+        push @out, $line;
 
-      if ( defined $tag
-           && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-      {
-        $level++;
-      }
-
-      next;
-    }
-
-    if ( _base_is_html_line_with_ep( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_line_contains_ep( $line ) ) {
-      $ep_level-- if _base_ep_closes_before( $line ) && $ep_level > 0;
-
-      if ( _base_is_ep_control_line( $line ) ) {
-        my $ep_line = _base_normalize_percent_line( $trimmed );
-        push @out, ( $step x $level ) . $ep_line;
-      }
-      elsif ( $line =~ /^\s*%/ ) {
-        my $ep_line       = _base_normalize_percent_line( $trimmed );
-        my $content_depth = $level + _base_effective_ep_indent( $ep_level );
-        push @out, ( $step x $content_depth ) . $ep_line;
-      }
-      else {
-        push @out,
-            ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-            . $trimmed;
-      }
-
-      $ep_level++ if _base_ep_opens_after( $line );
-      next;
-    }
-
-    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-      $depth = 0 if $depth < 0;
-
-      push @out, ( $step x $depth ) . $trimmed;
-
-      $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $depth;
-      $multiline_tag_opens =
-          (    defined $tag
-            && $tag !~ /\Aspan\z/i
-            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-          ? 1
-          : 0;
-
-      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
-
-      next;
-    }
-
-    if ( $in_comment_block ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_comment_block = 0 if _base_is_html_comment_end_line( $trimmed );
-      next;
-    }
-
-    if ( $in_script_block ) {
-      my $base = $level + _base_effective_ep_indent( $ep_level );
-
-      if ( _base_is_script_end_line( $trimmed ) ) {
-        push @out, ( $step x $base ) . $trimmed;
-        $in_script_block = 0;
-      }
-      else {
-        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
-      }
-
-      next;
-    }
-
-    if ( $in_style_block ) {
-      my $base = $level + _base_effective_ep_indent( $ep_level );
-
-      if ( _base_is_style_end_line( $trimmed ) ) {
-        push @out, ( $step x $base ) . $trimmed;
-        $in_style_block    = 0;
-        $style_inner_level = 0;
         next;
       }
 
-      my $line_level = $style_inner_level;
-
-      #Dedent closing-brace lines before printing
-      if ( $trimmed =~ /^\}/ ) {
-        $line_level-- if $line_level > 0;
+      if ( length $line ) {
+        my $body_indent = $target . $indent;
+        $line = $body_indent . $line;
       }
 
-      push @out, ( $step x ( $base + 1 + $line_level ) ) . $trimmed;
-
-      #One-line brace rules stay effectively unchanged my $opens = () =
-      my $opens  = () = $trimmed =~ /\{/g;
-      my $closes = () = $trimmed =~ /\}/g;
-
-      $style_inner_level += $opens - $closes;
-      $style_inner_level = 0 if $style_inner_level < 0;
-
-      next;
-    }
-
-    if ( _base_is_html_comment_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_comment_block = 1 unless _base_is_html_comment_line( $trimmed );
-      next;
-    }
-
-    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-      $depth = 0 if $depth < 0;
-
-      push @out, ( $step x $depth ) . $trimmed;
-
-      $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $depth;
-      $multiline_tag_opens =
-          (    defined $tag
-            && $tag !~ /\Aspan\z/i
-            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-          ? 1
-          : 0;
-
-      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
-
-      next;
-    }
-
-    if ( _base_is_script_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _attrib_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_script_block = 1 unless _base_is_script_end_line( $trimmed );
-      next;
-    }
-
-    if ( _base_is_style_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _attrib_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_style_block    = 1 unless _base_is_style_end_line( $trimmed );
-      $style_inner_level = 0;
-      next;
-    }
-
-    if ( _base_is_doctype_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_comment_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_mixed_inline_html_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_root_close_line( $trimmed ) ) {
-      push @out,
-          ( $step x _attrib_effective_ep_indent( $ep_level ) ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_root_open_line( $trimmed ) ) {
-      push @out,
-          ( $step x _attrib_effective_ep_indent( $ep_level ) ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
-
-      $level-- if $level > 0;
-
-      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
-
-      push @out, ( $step x $depth ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-
-      $depth = 0 if $depth < 0;
-
-      push @out, ( $step x $depth ) . $trimmed;
-      $level++;
-      next;
-    }
-
-    if ( _base_is_pure_void_tag_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_plain_text_line( $trimmed ) ) {
-      my $text_ep_depth = 0;
-
-      if ( $ep_level > 0 ) {
-        $text_ep_depth = $ep_level == 1 ? 1 : $ep_level - 1;
-      }
-
-      my $text_depth = $level + $text_ep_depth;
-
-      push @out, ( $step x $text_depth ) . $trimmed;
-      next;
-    }
-
-    push @out, $trimmed;
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_emit_attr_or_style_block ( $self, $indent, $attr_step, $attr,
-                                       $is_last = 0 )
-{
-  $attr = _attrib_normalize_style_attr( $attr );
-  return $indent . $attr_step . $attr . ( $is_last ? '>' : '' );
-}
-
-sub _attrib_expand_preferred_anchor_line ( $self, $line ) {
-  return undef unless defined $line;
-
-  my ( $indent, $attrs, $content ) = $line =~ m{
-    ^(\s*)
-    <a\b
-    ((?:[^>"']|"[^"]*"|'[^']*')*)
-    >
-    (.*?)
-    </a>\s*$
-  }x;
-
-  return undef unless defined $indent;
-  return undef unless defined $content && length $content;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
-
-  my @out;
-  my $first     = shift @attrs;
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  if ( @attrs ) {
-    push @out, $indent . '<a ' . $first;
-
-    while ( @attrs > 1 ) {
-      my $attr = shift @attrs;
-      push @out,
-          $self->_attrib_emit_attr_or_style_block( $indent, $attr_step, $attr,
-                                                   0 );
-    }
-
-    my $last_attr = $attrs[0];
-
-    if ( $last_attr =~ /^style="(.*)"$/s ) {
-      my $style = $1;
-      my @decls = _attrib_split_style_declarations( $style );
-
-      if ( @decls ) {
-        $out[-1] .= ' style="';
-        for my $i ( 0 .. $#decls ) {
-          my $line = $indent . $attr_step . $decls[$i];
-          $line .= '">' if $i == $#decls;
-          push @out, $line;
-        }
-      }
-      else {
-        push @out, $indent . $attr_step . $last_attr . '>';
-      }
-    }
-    else {
-      push @out, $indent . $attr_step . $last_attr . '>';
-    }
-  }
-  else {
-    push @out, $indent . '<a ' . $first . '>';
-  }
-
-  push @out, $indent . $step . $content;
-  push @out, $indent . '</a>';
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_button_line ( $self, $line ) {
-  return undef unless defined $line;
-
-  my ( $indent, $attrs, $content ) = $line =~ m{
-    ^(\s*)
-    <button\b
-    ((?:[^>"']|"[^"]*"|'[^']*')*)
-    >
-    (.*?)
-    </button>\s*$
-  }x;
-
-  return undef unless defined $indent;
-  return undef unless defined $content && length $content;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
-
-  my @out;
-  my $first     = shift @attrs;
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  if ( @attrs ) {
-    push @out, $indent . '<button ' . $first;
-
-    while ( @attrs > 1 ) {
-      my $attr = shift @attrs;
-      push @out,
-          $self->_attrib_emit_attr_or_style_block( $indent, $attr_step, $attr,
-                                                   0 );
-    }
-
-    my $last_attr = $attrs[0];
-
-    if ( $last_attr =~ /^style="(.*)"$/s ) {
-      my $style = $1;
-      my @decls = _attrib_split_style_declarations( $style );
-
-      if ( @decls ) {
-        $out[-1] .= ' style="';
-        for my $i ( 0 .. $#decls ) {
-          my $line = $indent . $attr_step . $decls[$i];
-          $line .= '">' if $i == $#decls;
-          push @out, $line;
-        }
-      }
-      else {
-        push @out, $indent . $attr_step . $last_attr . '>';
-      }
-    }
-    else {
-      push @out, $indent . $attr_step . $last_attr . '>';
-    }
-  }
-  else {
-    push @out, $indent . '<button ' . $first . '>';
-  }
-
-  push @out, $indent . $step . $content;
-  push @out, $indent . '</button>';
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_elements ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-
-  for my $line ( @lines ) {
-    my $expanded = $self->_attrib_expand_preferred_form_line( $line )
-        // $self->_attrib_expand_preferred_button_line( $line )
-        // $self->_attrib_expand_preferred_anchor_line( $line )
-        // $self->_attrib_expand_preferred_input_line( $line );
-    if ( defined $expanded ) {
-      push @out, split /\n/, $expanded, -1;
-    }
-    else {
       push @out, $line;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_form_line ( $self, $line ) {
-  return undef unless defined $line;
-
-  my ( $indent, $attrs ) = $line =~ m{
-    ^(\s*)
-    <form\b
-    ((?:[^>"']|"[^"]*"|'[^']*')*)
-    >\s*$
-  }x;
-
-  return undef unless defined $indent;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-
-  my @out;
-  my $first     = shift @attrs;
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  if ( @attrs ) {
-    push @out, $indent . '<form ' . $first;
-
-    while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
-    }
-
-    push @out, $indent . $attr_step . $attrs[0] . '>';
-  }
-  else {
-    push @out, $indent . '<form ' . $first . '>';
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_input_line ( $self, $line ) {
-  return undef unless defined $line;
-
-  my ( $indent, $attrs, $selfclose ) = $line =~ m{
-    ^(\s*)
-    <input\b
-    ((?:[^>"']|"[^"]*"|'[^']*')*)
-    \s*(/?)>\s*$
-  }x;
-
-  return undef unless defined $indent;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-
-  my @out;
-  my $first     = shift @attrs;
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-  my $close     = $selfclose ? ' />' : '>';
-
-  if ( @attrs ) {
-    push @out, $indent . '<input ' . $first;
-
-    while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
-    }
-
-    push @out, $indent . $attr_step . $attrs[0] . $close;
-  }
-  else {
-    push @out, $indent . '<input ' . $first . $close;
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_multiline_anchor_chunk ( $self, $chunk ) {
-  return undef unless $chunk && @$chunk;
-
-  my $first = $chunk->[0];
-  my ( $indent ) = $first =~ /^(\s*)/;
-  $indent //= '';
-
-  my $joined = join ' ', map {
-    my $x = $_;
-    $x =~ s/^\s+//;
-    $x =~ s/\s+$//;
-    $x;
-  } @$chunk;
-
-  return undef unless $joined =~ /^<a\b(.*)>\s*$/i;
-  my $attrs = $1;
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-
-  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
-
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  my @out;
-  my $first_attr = shift @attrs;
-
-  if ( @attrs ) {
-    push @out, $indent . '<a ' . $first_attr;
-
-    while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
-    }
-
-    push @out, $indent . $attr_step . $attrs[0] . '>';
-  }
-  else {
-    push @out, $indent . '<a ' . $first_attr . '>';
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_multiline_anchor_openers ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-  my $i = 0;
-
-  while ( $i <= $#lines ) {
-    my $line = $lines[$i];
-
-    unless ( defined $line && $line =~ /^\s*<a\b/i && $line !~ />\s*$/ ) {
-      push @out, $line;
-      $i++;
-      next;
-    }
-
-    my @chunk;
-
-    while ( $i <= $#lines ) {
-      push @chunk, $lines[$i];
-      last if $lines[$i] =~ />\s*$/;
-      $i++;
-    }
-
-    if ( $i <= $#lines && $lines[$i] =~ />\s*$/ ) {
-      my $expanded =
-          $self->_attrib_expand_preferred_multiline_anchor_chunk( \@chunk );
-      if ( defined $expanded ) {
-        push @out, split /\n/, $expanded, -1;
-      }
-      else {
-        push @out, @chunk;
-      }
-      $i++;
-      next;
-    }
-
-    push @out, @chunk;
-    $i++;
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_multiline_button_chunk ( $self, $chunk ) {
-  return undef unless $chunk && @$chunk;
-
-  my $first = $chunk->[0];
-  my ( $indent ) = $first =~ /^(\s*)/;
-  $indent //= '';
-
-  my $joined = join ' ', map {
-    my $x = $_;
-    $x =~ s/^\s+//;
-    $x =~ s/\s+$//;
-    $x;
-  } @$chunk;
-
-  return undef unless $joined =~ /^<button\b(.*)>\s*$/i;
-  my $attrs = $1;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs;
-
-  @attrs = map { _attrib_normalize_style_attr( $_ ) } @attrs;
-
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  my @out;
-  my $first_attr = shift @attrs;
-
-  if ( @attrs ) {
-    push @out, $indent . '<button ' . $first_attr;
-
-    while ( @attrs > 1 ) {
-      push @out, $indent . $attr_step . shift @attrs;
-    }
-
-    push @out, $indent . $attr_step . $attrs[0] . '>';
-  }
-  else {
-    push @out, $indent . '<button ' . $first_attr . '>';
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_expand_preferred_multiline_button_openers ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-  my $i = 0;
-
-  while ( $i <= $#lines ) {
-    my $line = $lines[$i];
-
-    unless ( defined $line && $line =~ /^\s*<button\b/i && $line !~ />\s*$/ ) {
-      push @out, $line;
-      $i++;
-      next;
-    }
-
-    my @chunk;
-    my $start = $i;
-
-    while ( $i <= $#lines ) {
-      push @chunk, $lines[$i];
-      last if $lines[$i] =~ />\s*$/;
-      $i++;
-    }
-
-    if ( $i <= $#lines && $lines[$i] =~ />\s*$/ ) {
-      my $expanded =
-          $self->_attrib_expand_preferred_multiline_button_chunk( \@chunk );
-      if ( defined $expanded ) {
-        push @out, split /\n/, $expanded, -1;
-      }
-      else {
-        push @out, @chunk;
-      }
-      $i++;
-      next;
-    }
-
-    push @out, @chunk;
-    $i++;
-  }
-
-  return join "\n", @out;
-}
-
-sub _attrib_format_inline_style_block ( $self, $lines, $base, $step ) {
-  my @out;
-  return @out unless $lines && @$lines;
-
-  my @trimmed = map {
-    my $x = $_;
-    $x =~ s/^\s+//;
-    $x =~ s/\s+$//;
-    $x;
-  } @$lines;
-
-  return ( ( $step x $base ) . $trimmed[0] ) if @trimmed == 1;
-
-  my $tag = _attrib_inline_style_block_tag_name( $trimmed[0] );
-
-  my $style_body_levels = 2;
-  $style_body_levels = 1 if defined $tag && $tag =~ /\Abutton\z/i;
-
-  my $last = pop @trimmed;
-  my ( $kind, $style_close, $content, $closing_tag ) =
-      _attrib_split_inline_style_tail( $last );
-
-  my $first = shift @trimmed;
-  push @out, ( $step x $base ) . $first;
-
-  $out[-1] .= ' style="' unless $out[-1] =~ /\bstyle="\s*$/;
-
-  for my $line ( @trimmed ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $line;
-  }
-
-  if ( !defined $kind ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $last;
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_only' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-
-    }
-    return @out;
-  }
-
-  if ( $kind eq 'style_close_on_declaration' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-
-    return @out;
-  }
-
-  if ( $kind eq 'closing_tag_only' ) {
-    if ( @out ) {
-
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-
-    }
-    push @out, ( $step x $base ) . $closing_tag if defined $closing_tag;
-    return @out;
-  }
-
-  if ( $kind eq 'text_and_closing_tag' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-
-    }
-    push @out, ( $step x ( $base + 1 ) ) . $content
-        if defined $content && length $content;
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_closing_tag' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-
-    }
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_text_and_closing_tag' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-
-    }
-    push @out, ( $step x ( $base + 1 ) ) . $content
-        if defined $content && length $content;
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-    return @out;
-  }
-
-  return @out;
-}
-
-sub _attrib_inline_style_block_tag_name ( $first_line ) {
-  return undef unless defined $first_line;
-  my ( $tag ) = $first_line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
-  return $tag;
-}
-
-sub _attrib_inline_style_tag_name ( $line ) {
-  return unless defined $line;
-  my ( $tag ) = $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
-  return $tag;
-}
-
-sub _attrib_inline_style_tail_has_closing_tag ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /<\/[A-Za-z][A-Za-z0-9:_-]*>\s*$/ ? 1 : 0;
-}
-
-sub _attrib_is_inline_style_closing_only_line ( $line ) {
-  return $line =~ /^\s*">\s*$/ ? 1 : 0;
-}
-
-sub _attrib_is_inline_style_end_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /">\s*$/ || $line =~ /">.*$/;
-}
-
-sub _attrib_is_inline_style_start_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*<[A-Za-z][A-Za-z0-9:_-]*\b.*\bstyle="\s*$/ ? 1 : 0;
-}
-
-sub _attrib_is_multiline_tag_start_line ( $line ) {
-  return 0 unless defined $line;
-  return 0 if $line =~ /^\s*<%/;
-  return 0 if _attrib_is_inline_style_start_line( $line );
-
-  return $line =~ /^\s*<[^\/!][^>]*$/ ? 1 : 0;
-}
-
-sub _attrib_normalize_style_attr ( $attr ) {
-  return '' unless defined $attr;
-
-  $attr =~ s/^\s+//;
-  $attr =~ s/\s+$//;
-
-  if ( $attr =~ /^style="(.*)"$/s ) {
-    my $style = $1;
-    $style =~ s/^\s+//;
-    $style =~ s/\s+$//;
-    return qq{style="$style"};
-  }
-
-  return $attr;
-}
-
-sub _attrib_split_html_attributes ( $attr_text ) {
-  return () unless defined $attr_text;
-
-  my @attrs;
-  pos( $attr_text ) = 0;
-
-  while (
-    $attr_text =~ /\G
-      \s*
-      (
-        [A-Za-z_:][-A-Za-z0-9_:.]*
-        (?: \s* = \s* (?: " [^"]* " | ' [^']* ' | [^\s"'=<>`]+ ) )?
-      )
-    /gcx
-      )
-  {
-    push @attrs, $1;
-  }
-
-  my $rest = substr( $attr_text, pos( $attr_text ) // 0 );
-  return () if $rest =~ /\S/;
-
-  return @attrs;
-}
-
-sub _attrib_split_inline_style_tail ( $line ) {
-  return unless defined $line;
-
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
-
-  # final declaration + close + text + closing tag
-  if ( $trimmed =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'text_and_closing_tag', $1, $2, $3 );
-  }
-
-  # final declaration + close + closing tag
-  if ( $trimmed =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'closing_tag_only', $1, undef, $2 );
-  }
-
-  # bare close + text + closing tag
-  if ( $trimmed =~ /^">([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'bare_close_text_and_closing_tag', '">', $1, $2 );
-  }
-
-  # bare close + closing tag
-  if ( $trimmed =~ /^">(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'bare_close_closing_tag', '">', undef, $1 );
-  }
-
-  # final declaration already ends with ">
-  if ( $trimmed =~ /^(.*;">)\s*$/ ) {
-    return ( 'style_close_on_declaration', $1, undef, undef );
-  }
-
-  # bare dangling close-only line
-  if ( $trimmed =~ /^">\s*$/ ) {
-    return ( 'bare_close_only', '">', undef, undef );
-  }
-
-  return;
-}
-
-sub _attrib_split_style_declarations ( $style ) {
-
-  return () unless defined $style && length $style;
-
-  my @parts = split /;/, $style;
-  @parts = map {
-    my $x = $_;
-    $x =~ s/^\s+//;
-    $x =~ s/\s+$//;
-    $x;
-  } @parts;
-
-  @parts = grep { length $_ } @parts;
-  @parts = map  { $_ . ';' } @parts;
-
-  return @parts;
-}
-
-############################
-#
-# basic indenting
-#
-############################
-
-sub _base_apply_basic_indentation ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  my @lines = split /\n/, $text, -1;
-  my @out;
-
-  my $level                     = 0;
-  my $ep_level                  = 0;
-  my $step                      = ' ' x $self->{indent_width};
-  my $in_comment_block          = 0;
-  my $in_script_block           = 0;
-  my $in_style_block            = 0;
-  my $in_inline_style_block     = 0;
-  my $inline_style_base         = 0;
-  my $in_multiline_tag_open     = 0;
-  my $style_inner_level         = 0;
-  my $multiline_tag_base        = 0;
-  my $multiline_tag_opens       = 0;
-  my $multiline_tag_attr_levels = 1;
-  my @inline_style_lines;
-
-  for my $line ( @lines ) {
-    my $trimmed = $line;
-    $trimmed =~ s/^\s+//;
-    $trimmed =~ s/\s+$//;
-
-    if ( $in_inline_style_block ) {
-      push @inline_style_lines, $line;
-
-      if ( _base_is_inline_style_end_line( $trimmed ) ) {
-        my $tail_has_closing_tag =
-            _base_inline_style_tail_has_closing_tag( $trimmed );
-
-        push @out,
-            $self->_base_preserve_inline_style_block( \@inline_style_lines,
-                                                   $inline_style_base, $step, );
-
-        $level-- if $tail_has_closing_tag && $level > 0;
-
-        @inline_style_lines    = ();
-        $in_inline_style_block = 0;
-      }
 
       next;
     }
 
-    if ( $line =~ /^\s*$/ ) {
-      push @out, '';
-      next;
-    }
-
-    if ( $in_multiline_tag_open ) {
-      push @out,
-          ( $step x ( $multiline_tag_base + $multiline_tag_attr_levels ) )
-          . $trimmed;
-
-      if ( _base_is_tag_end_line( $trimmed ) ) {
-        $level++ if $multiline_tag_opens && $trimmed !~ /\/>\s*$/;
-        $in_multiline_tag_open     = 0;
-        $multiline_tag_opens       = 0;
-        $multiline_tag_attr_levels = 1;
-      }
-
-      next;
-    }
-
-    if ( _base_is_inline_style_start_line( $trimmed ) ) {
-      my $tag = _base_inline_style_tag_name( $trimmed );
-
-      $in_inline_style_block = 1;
-      $inline_style_base     = $level + $ep_level;
-      @inline_style_lines    = ( $line );
-
-      if ( defined $tag
-           && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-      {
-        $level++;
-      }
-
-      next;
-    }
-
-    if ( _base_is_html_line_with_ep( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_line_contains_ep( $line ) ) {
-      $ep_level-- if _base_ep_closes_before( $line ) && $ep_level > 0;
-
-      if ( _base_is_ep_control_line( $line ) ) {
-        my $ep_line = _base_normalize_percent_line( $trimmed );
-        push @out, ( $step x $level ) . $ep_line;
-      }
-      elsif ( $line =~ /^\s*%/ ) {
-        my $ep_line       = _base_normalize_percent_line( $trimmed );
-        my $content_depth = $level + _base_effective_ep_indent( $ep_level );
-        push @out, ( $step x $content_depth ) . $ep_line;
-      }
-      else {
-        push @out,
-            ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-            . $trimmed;
-      }
-
-      $ep_level++ if _base_ep_opens_after( $line );
-      next;
-    }
-
-    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-      $depth = 0 if $depth < 0;
-
-      push @out, ( $step x $depth ) . $trimmed;
-
-      $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $depth;
-      $multiline_tag_opens =
-          (    defined $tag
-            && $tag !~ /\Aspan\z/i
-            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-          ? 1
-          : 0;
-
-      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
-
-      next;
-    }
-
-    if ( $in_comment_block ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_comment_block = 0 if _base_is_html_comment_end_line( $trimmed );
-      next;
-    }
-
-    if ( $in_script_block ) {
-      my $base = $level + _base_effective_ep_indent( $ep_level );
-
-      if ( _base_is_script_end_line( $trimmed ) ) {
-        push @out, ( $step x $base ) . $trimmed;
-        $in_script_block = 0;
-      }
-      else {
-        push @out, ( $step x ( $base + 1 ) ) . $trimmed;
-      }
-
-      next;
-    }
-
-    if ( $in_style_block ) {
-      my $base = $level + _base_effective_ep_indent( $ep_level );
-
-      if ( _base_is_style_end_line( $trimmed ) ) {
-        push @out, ( $step x $base ) . $trimmed;
-        $in_style_block    = 0;
-        $style_inner_level = 0;
-        next;
-      }
-
-      my $line_level = $style_inner_level;
-
-      # Dedent closing-brace lines before printing
-      if ( $trimmed =~ /^\}/ ) {
-        $line_level-- if $line_level > 0;
-      }
-
-      push @out, ( $step x ( $base + 1 + $line_level ) ) . $trimmed;
-
-      # One-line brace rules stay effectively unchanged
-      my $opens  = () = $trimmed =~ /\{/g;
-      my $closes = () = $trimmed =~ /\}/g;
-
-      $style_inner_level += $opens - $closes;
-      $style_inner_level = 0 if $style_inner_level < 0;
-
-      next;
-    }
-
-    if ( _base_is_html_comment_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_comment_block = 1 unless _base_is_html_comment_line( $trimmed );
-      next;
-    }
-
-    if ( _base_is_multiline_tag_start_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = $level + _base_effective_ep_indent( $ep_level );
-      $depth -= _base_visual_indent_adjust_for_tag( $tag );
-      $depth = 0 if $depth < 0;
-
-      push @out, ( $step x $depth ) . $trimmed;
-
-      $in_multiline_tag_open = 1;
-      $multiline_tag_base    = $depth;
-      $multiline_tag_opens =
-          (    defined $tag
-            && $tag !~ /\Aspan\z/i
-            && !_base_is_void_html_or_self_closing_tag( $tag, $trimmed ) )
-          ? 1
-          : 0;
-
-      $multiline_tag_attr_levels = $self->{attributes} ? 2 : 1;
-
-      next;
-    }
-
-    if ( _base_is_script_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_script_block = 1 unless _base_is_script_end_line( $trimmed );
-      next;
-    }
-
-    if ( _base_is_style_start_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      $in_style_block    = 1 unless _base_is_style_end_line( $trimmed );
-      $style_inner_level = 0;
-      next;
-    }
-
-    if ( _base_is_doctype_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_comment_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_mixed_inline_html_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth;
-      if ( defined $tag && $tag =~ /\Atd\z/i ) {
-        $depth = $level + _base_effective_ep_indent( $ep_level ) - 1;
-        $depth = 0 if $depth < 0;
-      }
-      else {
-        $depth = $level + _base_effective_ep_indent( $ep_level );
-      }
-
-      push @out, ( $step x $depth ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_root_close_line( $trimmed ) ) {
-      push @out, ( $step x _base_effective_ep_indent( $ep_level ) ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_html_root_open_line( $trimmed ) ) {
-      push @out, ( $step x _base_effective_ep_indent( $ep_level ) ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_pure_closing_tag_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^</([A-Za-z][A-Za-z0-9:_-]*)>};
-
-      $level-- if $level > 0;
-
-      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
-
-      push @out, ( $step x $depth ) . $trimmed;
-      next;
-    }
-
-    if ( _base_is_pure_opening_tag_line( $trimmed ) ) {
-      my ( $tag ) = $trimmed =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)\b};
-
-      my $depth = _base_visual_indent_for_open_tag( $tag, $level, $ep_level );
-
-      push @out, ( $step x $depth ) . $trimmed;
-      my $is_source_view_span =
-             defined $tag
-          && $tag =~ /\Aspan\z/i
-          && $trimmed =~
-          /\bclass="html-(?:tag|attribute-name|attribute-value|doctype)"/;
-
-      $level++ unless $is_source_view_span;
-      next;
-    }
-
-    if ( _base_is_pure_void_tag_line( $trimmed ) ) {
-      push @out,
-          ( $step x ( $level + _base_effective_ep_indent( $ep_level ) ) )
-          . $trimmed;
-      next;
-    }
-
-    if ( _base_is_plain_text_line( $trimmed ) ) {
-      my $text_ep_depth = 0;
-
-      if ( $ep_level > 0 ) {
-        $text_ep_depth = $ep_level == 1 ? 1 : $ep_level - 1;
-      }
-
-      my $text_depth = $level + $text_ep_depth;
-
-      push @out, ( $step x $text_depth ) . $trimmed;
-      next;
-    }
-
-    push @out, $trimmed;
-  }
-
-  return join "\n", @out;
-}
-
-sub _base_cohere_mixed_ep_micro_blocks ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-  my $i = 0;
-
-  while ( $i <= $#lines ) {
-    my $line = $lines[$i];
-
-    unless (    _base_is_percent_line( $line )
-             || _base_is_ep_output_line( $line ) )
-    {
-      push @out, $line;
-      $i++;
-      next;
-    }
-
-    my @block;
-
-    while ( $i <= $#lines ) {
-      my $cur = $lines[$i];
-      last
-          unless _base_is_percent_line( $cur )
-          || _base_is_ep_output_line( $cur );
-      push @block, $cur;
-      $i++;
-    }
-
-    my $has_controlish = grep { _base_is_percent_controlish_line( $_ ) } @block;
-    my $has_ep_output  = grep { _base_is_ep_output_line( $_ ) } @block;
-    my $has_closer     = grep { _base_is_percent_closer_line( $_ ) } @block;
-
-    if ( $has_controlish && $has_ep_output && $has_closer ) {
-      my $target;
-      for my $l ( @block ) {
-        next unless _base_is_percent_line( $l );
-        $target = _base_percent_indent( $l );
-        last;
-      }
-      $target //= 0;
-
-      for my $l ( @block ) {
-        if ( _base_is_percent_line( $l ) ) {
-          $l =~ s/^\s*(%.*)$/' ' x $target . $1/e;
-          push @out, $l;
-        }
-        elsif ( _base_is_ep_output_line( $l ) ) {
-          my $trim = $l;
-          $trim =~ s/^\s+//;
-          push @out, ( ' ' x ( $target + $self->{indent_width} ) ) . $trim;
-        }
-        else {
-          push @out, $l;
-        }
-      }
-    }
-    else {
-      push @out, @block;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _base_cohere_percent_clusters ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-  my $i = 0;
-
-  while ( $i <= $#lines ) {
-    if ( !_base_is_percent_line( $lines[$i] ) ) {
-      push @out, $lines[ $i++ ];
-      next;
-    }
-
-    my @cluster;
-
-    while ( $i <= $#lines && _base_is_percent_line( $lines[$i] ) ) {
-      push @cluster, $lines[$i];
-      $i++;
-    }
-
-    my $has_controlish =
-        grep { _base_is_percent_controlish_line( $_ ) } @cluster;
-    my $has_closer = grep { _base_is_percent_closer_line( $_ ) } @cluster;
-    my $starts_with_sub =
-        @cluster && _base_is_percent_sub_opener_line( $cluster[0] );
-
-    if ( $has_controlish && $has_closer && !$starts_with_sub ) {
-      my $target;
-      for my $l ( @cluster ) {
-        next unless _base_is_percent_line( $l );
-        my $n = _base_percent_indent( $l );
-        $target = $n if !defined( $target ) || $n < $target;
-      }
-      $target //= 0;
-
-      for my $l ( @cluster ) {
-        $l =~ s/^\s*(%.*)$/' ' x $target . $1/e;
-        push @out, $l;
-      }
-    }
-    else {
-      push @out, @cluster;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _base_effective_ep_indent ( $ep_level ) {
-  return $ep_level > 0 ? 1 : 0;
-}
-
-sub _base_ensure_final_newline ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/\n*\z/\n/;
-
-  return $text;
-}
-
-sub _base_ep_closes_before ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*%\s*}/ ? 1 : 0;
-}
-
-sub _base_ep_opens_after ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*%.*\{\s*$/ ? 1 : 0;
-}
-
-sub _base_format_inline_style_block ( $self, $lines, $base, $step ) {
-  my @out;
-  return @out unless $lines && @$lines;
-
-  my @trimmed = map {
-    my $x = $_;
-    $x =~ s/^\s+//;
-    $x =~ s/\s+$//;
-    $x;
-  } @$lines;
-
-  return ( ( $step x $base ) . $trimmed[0] ) if @trimmed == 1;
-
-  my $tag = _attrib_inline_style_block_tag_name( $trimmed[0] );
-
-  my $style_body_levels = 2;
-  $style_body_levels = 1 if defined $tag && $tag =~ /\Abutton\z/i;
-
-  my $last = pop @trimmed;
-  my ( $kind, $style_close, $content, $closing_tag ) =
-      _attrib_split_inline_style_tail( $last );
-
-  push @out, ( $step x $base ) . shift @trimmed;
-
-  for my $line ( @trimmed ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $line;
-  }
-
-  if ( !defined $kind ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $last;
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_only' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-    }
-    return @out;
-  }
-
-  if ( $kind eq 'style_close_on_declaration' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-    return @out;
-  }
-
-  if ( $kind eq 'closing_tag_only' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-    push @out, ( $step x $base ) . $closing_tag if defined $closing_tag;
-    return @out;
-  }
-
-  if ( $kind eq 'text_and_closing_tag' ) {
-    push @out, ( $step x ( $base + $style_body_levels ) ) . $style_close;
-    push @out, ( $step x ( $base + 1 ) ) . $content
-        if defined $content && length $content;
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_closing_tag' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-    }
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-    return @out;
-  }
-
-  if ( $kind eq 'bare_close_text_and_closing_tag' ) {
-    if ( @out ) {
-      $out[-1] .= $style_close;
-    }
-    else {
-      push @out, ( $step x $base ) . $style_close;
-    }
-    push @out, ( $step x ( $base + 1 ) ) . $content
-        if defined $content && length $content;
-    push @out, ( $step x $base ) . $closing_tag
-        if defined $closing_tag && length $closing_tag;
-    return @out;
-  }
-
-  return @out;
-}
-
-sub _base_inline_style_tag_name ( $line ) {
-  return unless defined $line;
-  my ( $tag ) = $line =~ /^\s*<([A-Za-z][A-Za-z0-9:_-]*)\b/;
-  return $tag;
-}
-
-sub _base_inline_style_tail_has_closing_tag ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /<\/[A-Za-z][A-Za-z0-9:_-]*>\s*$/ ? 1 : 0;
-}
-
-sub _base_is_doctype_line ( $line ) {
-  return $line =~ /^\s*<!DOCTYPE\b/i ? 1 : 0;
-}
-
-sub _base_is_ep_control_line ( $line ) {
-  return 0 unless defined $line;
-  return 0 unless $line =~ /^\s*%/;
-
-  return 1 if $line =~ /^\s*%\s*}/;
-  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
-
-  return 0;
-}
-
-sub _base_is_ep_output_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*<%=[\s\S]*%>\s*$/ ? 1 : 0;
-}
-
-sub _base_is_html_comment_end_line ( $line ) {
-  return $line =~ /-->\s*$/ ? 1 : 0;
-}
-
-sub _base_is_html_comment_line ( $line ) {
-  return $line =~ /^\s*<!--.*-->\s*$/ ? 1 : 0;
-}
-
-sub _base_is_html_comment_start_line ( $line ) {
-  return $line =~ /^\s*<!--/ ? 1 : 0;
-}
-
-sub _base_is_html_line_with_ep ( $line ) {
-  return 0 if !defined $line || $line eq '';
-  return 0 unless $line =~ /^\s*</;
-  return 0 if $line     =~ /^\s*<%[=%#]?/; # leading EP tag line stays untouched
-  return 0 unless _base_line_contains_ep( $line );
-  return 1;
-}
-
-sub _base_is_html_root_close_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*<\/html>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_html_root_open_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*<html>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_inline_style_start_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*<[A-Za-z][A-Za-z0-9:_-]*\b.*\bstyle="\s*$/ ? 1 : 0;
-}
-
-sub _base_is_inline_style_end_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /">\s*$/ || $line =~ /">.*$/;
-}
-
-sub _base_is_multiline_tag_start_line ( $line ) {
-  return 0 unless defined $line;
-  return 0 if $line =~ /^\s*<%/;
-  return 0 if _attrib_is_inline_style_start_line( $line );
-  return $line =~ /^\s*<[^\/!][^>]*$/ ? 1 : 0;
-}
-
-sub _base_is_mixed_inline_html_line ( $line ) {
-  return 0 if !defined $line || $line eq '';
-  return 0 if _base_line_contains_ep( $line );
-
-  return 0 if _base_is_pure_opening_tag_line( $line );
-  return 0 if _base_is_pure_closing_tag_line( $line );
-  return 0 if _base_is_pure_void_tag_line( $line );
-  return 0 if _base_is_doctype_line( $line );
-  return 0 if _base_is_html_comment_line( $line );
-
-  return 1 if $line =~ /</ && $line =~ />/;
-
-  return 0;
-}
-
-sub _base_is_percent_closer_line ( $line ) {
-  return defined $line && $line =~ /^\s*%\s*}/ ? 1 : 0;
-}
-
-sub _base_is_percent_comment_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*%\s*#/ ? 1 : 0;
-}
-
-sub _base_is_percent_controlish_line ( $line ) {
-  return 0 unless defined $line;
-  return 1 if $line =~ /^\s*%\s*#/;
-  return 1 if $line =~ /^\s*%\s*(?:if|elsif|else|for|foreach|while|unless)\b/;
-  return 1 if $line =~ /^\s*%\s*}/;
-  return 0;
-}
-
-sub _base_is_percent_line ( $line ) {
-  return defined $line && $line =~ /^\s*%/ ? 1 : 0;
-}
-
-sub _base_is_percent_sub_opener_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ /^\s*%\s*.*\bsub\s*\{\s*$/ ? 1 : 0;
-}
-
-sub _base_is_plain_text_line ( $line ) {
-  return 0 if !defined $line || $line eq '';
-  return 0 if _base_line_contains_ep( $line );
-  return 0 if $line =~ /</;
-  return 1;
-}
-
-sub _base_is_pure_closing_tag_line ( $line ) {
-  return $line =~ m{^</[A-Za-z][A-Za-z0-9:_-]*>\s*$} ? 1 : 0;
-}
-
-sub _base_is_pure_opening_tag_line ( $line ) {
-  return 0 if $line =~ /<%/;
-  return 0 if $line =~ m{^</};
-
-  return $line =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?>\s*$}
-      ? !_base_is_void_html_tag( $1 )
-      : 0;
-}
-
-sub _base_is_pure_void_tag_line ( $line ) {
-  return 0 if $line =~ /<%/;
-
-  return $line =~ m{^<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?/?>\s*$}
-      ? _base_is_void_html_tag( $1 ) || $line =~ m{/>$}
-      : 0;
-}
-
-sub _base_is_script_end_line ( $line ) {
-  return $line =~ /^\s*<\/script>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_script_start_line ( $line ) {
-  return $line =~ /^\s*<script\b[^>]*>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_style_end_line ( $line ) {
-  return $line =~ /^\s*<\/style>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_style_start_line ( $line ) {
-  return $line =~ /^\s*<style\b[^>]*>\s*$/i ? 1 : 0;
-}
-
-sub _base_is_tag_end_line ( $line ) {
-  return 0 unless defined $line;
-  return $line =~ />\s*$/ ? 1 : 0;
-}
-
-sub _base_is_void_html_or_self_closing_tag ( $tag, $line ) {
-  return 1 if defined $line && $line =~ /\/>\s*$/;
-  return _base_is_void_html_tag( $tag );
-}
-
-sub _base_is_void_html_tag ( $tag ) {
-  state %void = map { $_ => 1 } qw(
-      area base br col embed hr img input link meta param source track wbr
-  );
-
-  return $void{lc $tag} ? 1 : 0;
-}
-
-sub _base_line_contains_ep ( $line ) {
-  return $line =~ /<%|^\s*%/ ? 1 : 0;
-}
-
-sub _base_line_indent ( $line ) {
-  return 0 unless defined $line;
-  $line =~ /^(\s*)/;
-  return length( $1 // '' );
-}
-
-sub _base_looks_like_saved_source_view ( $text ) {
-  return 0 unless defined $text && length $text;
-
-  return 1 if $text =~ /\A<!--\s*saved from url=/i;
-  return 0;
-}
-
-sub _base_normalize_line_endings ( $self, $text ) {
-  $text = '' unless defined $text;
-
-  $text =~ s/\r\n/\n/g;
-  $text =~ s/\r/\n/g;
-
-  return $text;
-}
-
-sub _base_normalize_percent_line ( $line ) {
-  return $line unless defined $line;
-  $line =~ s/^\s*%\s*/% /;
-  return $line;
-}
-
-sub _base_percent_indent ( $line ) {
-  return 0 unless defined $line;
-  $line =~ /^(\s*)%/;
-  return defined $1 ? length( $1 ) : 0;
-}
-
-sub _base_preprocess_maxchars ( $self, $text ) {
-  return $text unless defined $text && length $text;
-  return $text unless $self->{maxchars};
-
-  my @lines = split /\n/, $text, -1;
-
-  for my $line ( @lines ) {
-
-    # 1. visual-block split on large whitespace gaps
-    $line =~ s/>\s{3,}(?=<)/>\n\n\n/g;
-
-    if ( $self->{maxchars} > 1 ) {
-
-      # 2. split on ordinary inter-tag whitespace
-      if ( length( $line ) > $self->{maxchars} ) {
-        $line =~ s/>\s+(?=<)/>\n/g;
-      }
-
-      # 3. final hard fallback: split on direct tag seams
-      if ( length( $line ) > $self->{maxchars} ) {
-        $line =~ s/>(?=<)/>\n/g;
-      }
-    }
-  }
-
-  $text = join "\n", @lines;
-
-  $text = $self->_base_preprocess_maxchars_collapse_trivial_pairs( $text )
-      if $self->{maxchars} > 1;
-  return $text;
-}
-
-sub _base_preprocess_maxchars_collapse_trivial_pairs ( $self, $text ) {
-  return $text unless defined $text && length $text;
-
-  my @lines = split /\n/, $text, -1;
-  my @out;
-  my $i = 0;
-
-  while ( $i <= $#lines ) {
-    my $line = $lines[$i];
-
-    if ( $i < $#lines ) {
-      my $next = $lines[ $i + 1 ];
-
-      if ( $line =~ /^(\s*<([A-Za-z][A-Za-z0-9:_-]*)(?:\s+[^<>]*)?>)\s*$/ ) {
-        my ( $open, $tag ) = ( $1, $2 );
-
-        if ( $tag =~ /\A(?:table|tbody|thead|tfoot|tr)\z/i ) {
-          push @out, $line;
-          $i++;
-          next;
-        }
-
-        if ( $next =~ /^\s*(<\/\Q$tag\E>)\s*$/ ) {
-          my $close  = $1;
-          my $joined = $open . $close;
-
-          if (   !$self->{maxchars}
-               || $self->{maxchars} == 1
-               || length( $joined ) <= $self->{maxchars} )
-          {
-            push @out, $joined;
-            $i += 2;
-            next;
-          }
-        }
+    if ( $level > 0 && length $line ) {
+      my $leading = '';
+      $leading = $1 if $line =~ /^(\s*)/;
+
+      if ( length( $leading ) < length( $target ) ) {
+        $line =~ s/^\s*/$target/;
       }
     }
 
     push @out, $line;
-    $i++;
+
+    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+      $level++;
+    }
   }
 
   return join "\n", @out;
 }
 
-sub _base_preserve_inline_style_block ( $self, $lines, $base, $step ) {
-  return () unless $lines && @$lines;
+sub _isolate_script_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
 
-  my @raw = @$lines;
+  # Put script blocks on their own visual island.
+  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
+  $text =~ s{(<script\b[^>]*>)\s*(?=\S)}{$1\n}gi;
+  $text =~ s{;[ \t]*(?=</script>)}{;\n}gi;
+  $text =~ s{([^\n])(?=</script>)}{$1\n}gi;
+  $text =~ s{(</script>)\n*}{$1\n\n}gi;
 
-  my @lead = map {
-    my ( $ws ) = $_ =~ /^(\s*)/;
-    length( $ws // '' );
-  } grep { defined $_ && length $_ } @raw;
-
-  my $common = @lead ? $lead[0] : 0;
-  for my $n ( @lead ) {
-    $common = $n if $n < $common;
-  }
-
-  my @out;
-  for my $line ( @raw ) {
-    my $x = $line;
-    $x =~ s/^\s{$common}// if $common > 0;
-    push @out, ( $step x $base ) . $x;
-  }
-
-  return @out;
+  return $text;
 }
 
-sub _base_split_inline_style_tail ( $line ) {
-  return unless defined $line;
+sub _js_format_text ( $self, $js, $matched = undef ) {
+  return '' unless defined $js && length $js;
 
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
+  my $original = $js;
 
-  # final declaration + close + text + closing tag
-  if ( $trimmed =~ /^(.*?;">)([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'text_and_closing_tag', $1, $2, $3 );
+  #   $js = $self->_js_prebake( $js );
+
+  #   if ( $js =~ /reset UI/ ) {
+  #     my $slice = $js;
+  #     $slice =~ s/\n/⏎\n/g;
+  #
+  #   }
+
+  my $formatted = eval {
+    js_beautify(
+                 $js,
+                 {
+                  indent_size               => $self->{indent_width},
+                  indent_character          => ' ',
+                  preserve_newlines         => 1,
+                  space_after_anon_function => 0,
+                 } );
+  };
+
+  if ( $@ ) {
+    warn
+"JavaScript::Beautifier failed; leaving original JavaScript unchanged: $@";
+    return $original;
   }
 
-  # final declaration + close + closing tag
-  if ( $trimmed =~ /^(.*?;">)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'closing_tag_only', $1, undef, $2 );
+  return $js unless defined $formatted && length $formatted;
+
+  $formatted =~ s/\s+\z//;
+
+  return $formatted;
+}
+
+sub _perltidy_ensure_tmp_dir ( $self ) {
+  require File::Path;
+
+  my $dir = $self->_perltidy_tmp_dir;
+
+  File::Path::make_path( $dir ) unless -d $dir;
+
+  return $dir;
+}
+
+sub perltidy_input_from_chunks ( $self, @chunks ) {
+  my @out;
+
+  for my $i ( 0 .. $#chunks ) {
+    my $chunk = $chunks[$i];
+    my $line  = $chunk->{text};
+
+    if ( $chunk->{kind} eq 'blank' ) {
+      my $prev = $i > 0        ? $chunks[ $i - 1 ]{text} : '';
+      my $next = $i < $#chunks ? $chunks[ $i + 1 ]{text} : '';
+
+      if ( $prev =~ m{</script>\s*\z}i || $next =~ m{\A<script\b}i ) {
+        push @out, '0; # PrettyTidy:';
+      }
+
+      next;
+    }
+
+    if ( $chunk->{kind} eq 'ep_control' ) {
+      $line =~ s/^\s*%\s?//;
+      push @out, $line;
+      next;
+    }
+
+    if ( $line =~ /^\s*<script\b/i ) {
+      push @out, '0; # PrettyTidy:';
+    }
+
+    push @out, '0; # PrettyTidy:' . $line;
   }
 
-  # bare close + text + closing tag
-  if ( $trimmed =~ /^">([^<]+)(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'bare_close_text_and_closing_tag', '">', $1, $2 );
+  return join "\n", @out;
+}
+
+sub perltidy_reemit_regions ( $self, @chunks ) {
+  my @out;
+  my @current;
+  my $depth     = 0;
+  my $in_region = 0;
+  my $idx       = 0;
+
+  for my $pos ( 0 .. $#chunks ) {
+    my $chunk = $chunks[$pos];
+    my $ep    = $chunk->{kind} eq 'ep_control' ? $chunk->{ep} : undef;
+
+    if ( !$in_region ) {
+      if ( defined $ep && $ep eq 'opener' ) {
+        $in_region = 1;
+        $depth     = 0;
+        @current   = ();
+      } else {
+        my $line = $chunk->{text};
+
+        push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
+        push @out, $line;
+        push @out, '' if $line =~ m{</script>\s*$}i;
+
+        next;
+      }
+    }
+
+    push @current, $chunk;
+
+    if ( defined $ep && ( $ep eq 'closer' || $ep eq 'transition' ) ) {
+      $depth-- if $depth > 0;
+    }
+
+    my $next_ep = undef;
+
+    if ( defined $ep && $ep eq 'closer' && $depth == 0 ) {
+      for my $j ( ( $pos + 1 ) .. $#chunks ) {
+        next if $chunks[$j]{kind} eq 'blank';
+        $next_ep = $chunks[$j]{kind} eq 'ep_control' ? $chunks[$j]{ep} : undef;
+        last;
+      }
+    }
+
+    if (    defined $ep
+         && $ep eq 'closer'
+         && $depth == 0
+         && ( $next_ep // '' ) ne 'transition' )
+    {
+      $idx++;
+      my $perl = $self->perltidy_input_from_chunks( @current );
+
+      if ( !$self->_perltidy_region_supported( $perl ) ) {
+        for my $chunk ( @current ) {
+          my $line = $chunk->{text};
+          push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
+          push @out, $line;
+          push @out, '' if $line =~ m{</script>\s*$}i;
+
+        }
+      } else {
+        my ( $ok, $tidied ) = $self->perltidy_run( $perl, $idx );
+
+        if ( !$ok ) {
+          for my $chunk ( @current ) {
+            my $line = $chunk->{text};
+            push @out, ''
+                if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
+            push @out, $line;
+            push @out, '' if $line =~ m{</script>\s*$}i;
+          }
+        } else {
+          my $template = $self->perltidy_template_from_region( $tidied );
+          push @out, split /\n/, $template, -1;
+        }
+      }
+
+      @current   = ();
+      $in_region = 0;
+      next;
+    }
+
+    if ( defined $ep && ( $ep eq 'opener' || $ep eq 'transition' ) ) {
+      $depth++;
+    }
   }
 
-  # bare close + closing tag
-  if ( $trimmed =~ /^">(<\/[A-Za-z][A-Za-z0-9:_-]*>\s*)$/ ) {
-    return ( 'bare_close_closing_tag', '">', undef, $1 );
+  # EOF block
+  if ( @current ) {
+    $idx++;
+
+    my $perl = $self->perltidy_input_from_chunks( @current );
+
+    if ( !$self->_perltidy_region_supported( $perl ) ) {
+      for my $chunk ( @current ) {
+        my $line = $chunk->{text};
+        push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
+        push @out, $line;
+        push @out, '' if $line =~ m{</script>\s*$}i;
+      }
+    } else {
+      my ( $ok, $tidied ) = $self->perltidy_run( $perl, $idx );
+
+      if ( !$ok ) {
+        for my $chunk ( @current ) {
+          my $line = $chunk->{text};
+          push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
+          push @out, $line;
+          push @out, ''
+              if $line =~ m{</script>\s*$}i;
+        }
+      } else {
+        my $template = $self->perltidy_template_from_region( $tidied );
+        push @out, split /\n/, $template, -1;
+      }
+    }
   }
 
-  # final declaration already ends with ">
-  if ( $trimmed =~ /^(.*;">)\s*$/ ) {
-    return ( 'style_close_on_declaration', $1, undef, undef );
+  return join "\n", @out;
+}
+
+sub perltidy_run ( $self, $perl, $idx = 1 ) {
+
+  # try stdin/stdout first
+  # if success, return tidied stdout
+  # if fail, write debug file and rerun file-mode for .ERR/.LOG
+  # return original $perl
+  return '' unless defined $perl && length $perl;
+
+  require IPC::Open3;
+  require IO::Select;
+  require Symbol;
+
+  my @pipe_cmd = ( 'perltidy', '-q', '-st', '-se' );
+
+  my $home_rc = defined $ENV{HOME} ? "$ENV{HOME}/.perltidyrc" : '';
+
+  push @pipe_cmd, "-pro=$home_rc" if length $home_rc && -f $home_rc;
+
+  # PrettyTidy owns wrapping/columns later.
+  # Keep perltidy from making width decisions.
+  push @pipe_cmd, '-l=9999';
+  push @pipe_cmd, '-nbbc';
+
+  #   push @pipe_cmd, '-nbbb';
+
+  my $err = Symbol::gensym();
+  my ( $in, $out );
+
+  my $pid = eval { IPC::Open3::open3( $in, $out, $err, @pipe_cmd ) };
+
+  if ( $@ ) {
+    warn "Cannot run perltidy: $@";
+    $self->debug_perltidy_write_file( $idx, $perl );
+    return ( 0, $perl );
   }
 
-  # bare dangling close-only line
-  if ( $trimmed =~ /^">\s*$/ ) {
-    return ( 'bare_close_only', '">', undef, undef );
+  print {$in} $perl;
+  close $in;
+
+  my ( $tidied, $errors ) = ( '', '' );
+  my $sel = IO::Select->new( $out, $err );
+
+  while ( my @ready = $sel->can_read ) {
+    for my $fh ( @ready ) {
+      my $buf = '';
+      my $len = sysread $fh, $buf, 8192;
+
+      if ( !defined $len ) {
+        next if $!{EINTR};
+        $sel->remove( $fh );
+        next;
+      }
+
+      if ( $len == 0 ) {
+        $sel->remove( $fh );
+        next;
+      }
+
+      if ( fileno( $fh ) == fileno( $out ) ) {
+        $tidied .= $buf;
+      } else {
+        $errors .= $buf;
+      }
+    }
+  }
+
+  waitpid $pid, 0;
+  my $status = $? >> 8;
+
+  open my $dbg, '>', './tmp/pt.raw-perltidy.out'
+      or die "Cannot write ./tmp/pt.raw-perltidy.out: $!";
+  print {$dbg} $tidied;
+  close $dbg;
+
+  return ( 1, $tidied ) if $status == 0 && length $tidied;
+
+  warn "perltidy failed with status $status; writing debug file\n";
+  warn $errors if length $errors;
+
+  my $path = $self->debug_perltidy_write_file( $idx, $perl );
+
+  my @file_cmd = ( 'perltidy', '-b' );
+
+  push @file_cmd, "-pro=$home_rc" if length $home_rc && -f $home_rc;
+
+  # PrettyTidy owns wrapping/columns later.
+  # Keep perltidy from making width decisions.
+  push @file_cmd, '-l=9999';
+  push @file_cmd, '-nbbc';
+
+  # Debug mode: force sidecar LOG output.
+  push @file_cmd, '-g';
+
+  push @file_cmd, $path;
+  warn "PERLTIDY PIPE CMD: @pipe_cmd\n";
+  system @file_cmd;
+
+  warn "perltidy debug input: $path\n";
+  warn "perltidy debug log:   $path.LOG\n" if -f "$path.LOG";
+  warn "perltidy debug err:   $path.ERR\n" if -f "$path.ERR";
+
+  return ( 0, $perl );
+
+}
+
+sub perltidy_template_from_region ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @out;
+
+  for my $line ( split /\n/, $text, -1 ) {
+    if ( $line eq '' ) {
+      push @out, '';
+      next;
+    }
+
+    my $marker_re = qr/0;\s*# PrettyTidy:/;
+
+    if ( $line =~ /$marker_re/ ) {
+      my $after = $line;
+      $after =~ s/^.*?$marker_re//;
+
+      if ( $after !~ /\S/ ) {
+        push @out, '';
+        next;
+      }
+
+      my $matched = $&;
+      my $pad     = ' ' x length( $matched );
+
+      $line =~ s/$marker_re/$pad/;
+      push @out, $line;
+      next;
+    }
+
+    push @out, '% ' . $line;
+  }
+
+  return join "\n", @out;
+}
+
+sub _perltidy_region_supported ( $self, $perl ) {
+  return 0 unless defined $perl && length $perl;
+
+  # Mojo/debug templates often contain multiline constructs like:
+  #   for my $line (@{
+  #     ...
+  #   }) {
+  return 0 if $perl =~ /\@\{\s*(?:\n|\z)/;
+
+  # Also skip regions containing Mojo's "begin" helper style until we handle it
+  # deliberately.
+  return 0 if $perl =~ /\bbegin\s*(?:\n|\z)/;
+
+  return 1;
+}
+
+sub _perltidy_tmp_dir ( $self ) {
+  require Cwd;
+  require File::Basename;
+  require File::Spec;
+
+  my $module_dir = File::Basename::dirname( __FILE__ );
+  my $root = Cwd::abs_path( File::Spec->catdir( $module_dir, '..', '..' ) );
+
+  die "Cannot resolve project root from " . __FILE__ . "\n"
+      unless defined $root && length $root;
+
+  return File::Spec->catdir( $root, 'tmp', 'perltidy' );
+}
+
+sub _reemit_begin_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @out;
+  my $level  = 0;
+  my $indent = ' ' x $self->{indent_width};
+
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind = $self->_ep_control( $line );
+
+    if ( defined $kind && $kind eq 'end' ) {
+      $level-- if $level > 0;
+    }
+
+    if ( $level > 0 && length $line ) {
+      $line =~ s/^\s+//;
+      $line = ( $indent x $level ) . $line;
+    }
+
+    push @out, $line;
+
+    if ( defined $kind && $kind eq 'begin' ) {
+      $level++;
+    }
+  }
+
+  return join "\n", @out;
+}
+
+sub _separate_adjacent_ep_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my $tag = qr/[A-Za-z][A-Za-z0-9:_-]*/;
+  my $ctl = qr/(?:if|unless|for|foreach|while)/;
+  $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+  $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+
+  #   $text =~ s{(%\s*\}\s*)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+  #   $text =~ s{(%\s*\}\s*)\n(</$tag>)}{$1\n\n$2}g;
+
+  return $text;
+}
+
+sub _separate_begin_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @in = split /\n/, $text, -1;
+  my @out;
+  my $level = 0;
+
+  for my $i ( 0 .. $#in ) {
+    my $line = $in[$i];
+    my $kind = $self->_ep_control( $line );
+
+    if ( defined $kind && $kind eq 'end' ) {
+      $level-- if $level > 0;
+    }
+
+    if (    defined $kind
+         && $kind eq 'begin'
+         && $level == 0
+         && @out
+         && $out[-1] ne '' )
+    {
+      push @out, '';
+    }
+
+    push @out, $line;
+
+    if ( defined $kind && $kind eq 'end' && $level == 0 ) {
+      my $next = $in[ $i + 1 ] // '';
+      push @out, '' if $next =~ /\S/ && @out && $out[-1] ne '';
+    }
+
+    if ( defined $kind && $kind eq 'begin' ) {
+      $level++;
+    }
+  }
+
+  return join "\n", @out;
+}
+
+sub _separate_brace_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @in = split /\n/, $text, -1;
+  my @out;
+  my $depth = 0;
+
+  for my $i ( 0 .. $#in ) {
+    my $line = $in[$i];
+    my $kind = $self->_ep_control( $line );
+
+    my $leading = 0;
+    $leading = length( $1 ) if $line =~ /\A(\s*)/;
+
+    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+      $depth-- if $depth > 0;
+    }
+
+    if (    defined $kind
+         && $kind eq 'opener'
+         && $depth == 0
+         && $leading == 0
+         && @out
+         && $out[-1] ne '' )
+    {
+      push @out, '';
+    }
+
+    push @out, $line;
+
+    if (    defined $kind
+         && $kind eq 'closer'
+         && $depth == 0
+         && $leading == 0 )
+    {
+      my $next = $in[ $i + 1 ] // '';
+
+      if ( $next =~ /\S/ && $next !~ /^\s*%\s*(?:\}\s*)?(?:else|elsif)\b/ ) {
+        push @out, '' unless @out && $out[-1] eq '';
+      }
+    }
+
+    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+      $depth++;
+    }
+  }
+
+  return join "\n", @out;
+}
+
+sub _separate_initial_ep_statement_block ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  $text =~ s{
+    \A
+    (
+      (?:
+        %\s*(?:layout|title|my|our|state)\b[^\n]*;\n
+      )+
+    )
+    (?=<[A-Za-z])
+  }{$1\n}gx;
+
+  return $text;
+}
+
+sub tidy ( $self, $input ) {
+  my $text = defined $input ? $input : '';
+  my $flat = $self->_flatten( $text );
+
+  #   $flat = $self->_js_format_text( $flat );
+
+  my @chunks = $self->_chunks_from_flat( $flat );
+  my $out    = $self->perltidy_reemit_regions( @chunks );
+
+  $out = $self->_indent_output_lines_in_ep_blocks( $out );
+  $out = $self->_reemit_begin_blocks( $out );
+  $out = $self->_separate_begin_blocks( $out );
+  $out = $self->_separate_brace_blocks( $out );
+  $out = $self->_separate_initial_ep_statement_block( $out );
+  $out = $self->_separate_adjacent_ep_blocks( $out );
+  $out = $self->_html_separate_blocks( $out );
+  $out = $self->_html_separate_landmarks( $out );
+  $out = $self->_compact_blank_runs( $out );
+
+  return $out;
+}
+
+1;
+
+=pod
+
+
+sub _js_formatter_munged ( $self, $before, $after, $matched = undef ) {
+  return 0 if !defined $before || !defined $after;
+  return 0 if $before eq $after;
+
+  my @problems;
+
+  if ( $before =~ /=>/ && $after =~ /=\s+>/ ) {
+    push @problems, 'arrow function token => became = >';
+  }
+
+  if ( $before =~ /\?\./ && $after =~ /\?\s+\./ ) {
+    push @problems, 'optional chaining token ?. was split';
+  }
+
+  if ( $before =~ /\?\?/ && $after =~ /\?\s+\?/ ) {
+    push @problems, 'nullish coalescing token ?? was split';
+  }
+
+  if ( $before =~ /\?\?=/ && $after =~ /\?\s+\?\s*=/ ) {
+    push @problems, 'nullish assignment token ??= was split';
+  }
+
+  if ( $before =~ /\|\|=/ && $after =~ /\|\s+\|\s*=/ ) {
+    push @problems, 'logical OR assignment token ||= was split';
+  }
+
+  if ( $before =~ /&&=/ && $after =~ /&\s+&\s*=/ ) {
+    push @problems, 'logical AND assignment token &&= was split';
+  }
+
+  if (    $before =~ /\basync[ \t]+function\b/
+       && $after =~ /\basync[ \t]*\n[\t]*function\b/ )
+  {
+    push @problems, 'async function was split across lines';
+  }
+
+  if ( $before =~ m{//[^\n]*\n\s*\S} ) {
+    for my $line ( split /\n/, $after ) {
+      if (
+        $line =~
+m{//[^\n]*[A-Za-z0-9_\)](?:document\.|window\.|console\.|const\s+|let\s+|var\s+|if\s
+*\(|for\s*\(|while\s*\(|return\b|function\s+|async\s+function\s+|class\s+|new\s+)}
+          )
+      {
+        push @problems, 'line comment may have swallowed following JavaScript';
+        last;
+      }
+    }
+  }
+  return 0 if !@problems;
+
+  my $where = defined $matched ? " in <script> block $matched" : '';
+
+  warn "PrettyTidy JavaScript formatter may have munged syntax$where;\n"
+      . "\tleaving original JavaScript unchanged:\n";
+
+  for my $problem ( @problems ) {
+    warn "  - $problem\n";
+  }
+
+  say;
+
+  return 1;
+}
+
+sub _js_prebake ( $self, $js ) {
+  return '' unless defined $js && length $js;
+
+  # Flattening can glue line comments to the following statement.
+  # Repair flattened JS line comments before beautification,
+  # by splitting before a likely JavaScript statement starter.
+  $js =~ s{
+    (//[^\n]*?[A-Za-z0-9_])
+    (?=
+        document\.
+      | window\.
+      | console\.
+      | const\s+
+      | let\s+
+      | var\s+
+      | if\s*\(
+      | for\s*\(
+      | while\s*\(
+      | return\b
+      | function\s+
+      | async\s+function\s+
+      | class\s+
+      | new\s+
+      | await\s+
+    )
+  }{$1\n}gx;
+
+  # Conservative statement boundaries.
+  # Do not split semicolons inside for (...) headers.
+  $js =~ s{;\s*(?=(?:const|let|var)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:if|for|while|switch|try|catch|finally)\b)}{;\n}g;
+  $js =~ s{;\s*(?=(?:function|async\s+function|class)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
+  $js =~ s{;\s*(?=return\b)}{;\n}g;
+
+  # Function/block boundaries commonly glued by flattening.
+  $js =~ s{\}\s*(?=(?:const|let|var)\s+)}{\}\n}g;
+  $js =~ s{\}\s*(?=(?:function|async\s+function|class)\s+)}{\}\n}g;
+  $js =~ s{\}\s*(?=(?:document|window|console)\.)}{\}\n}g;
+
+  return $js;
+}
+
+sub _js_repair_known_munges ( $self, $before, $after ) {
+  return $after if !defined $before || !defined $after;
+  return $after if $before eq $after;
+
+  if ( $before =~ /=>/ ) {
+    $after =~ s/=\s+>/=>/g;
+    $after =~ s/=>\s*\{/=> {/g;
+  }
+
+  if ( $before =~ /\?\?=/ ) {
+    $after =~ s/\?\s+\?\s*=/??=/g;
+  }
+
+  if ( $before =~ /\?\?/ ) {
+    $after =~ s/\?\s+\?/??/g;
+  }
+
+  if ( $before =~ /\?\./ ) {
+    $after =~ s/\?\s+\./?./g;
+  }
+
+  if ( $before =~ /\|\|=/ ) {
+    $after =~ s/\|\s+\|\s*=/||=/g;
+  }
+
+  if ( $before =~ /&&=/ ) {
+    $after =~ s/&\s+&\s*=/&&=/g;
+  }
+
+  return $after;
+}
+
+sub _js_format_script_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  # Unhook script blocks from preceding payload before extraction.
+  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
+
+  # Break JavaScript body from opening script tag.
+  $text =~ s{(<script\b[^>]*>)\s*(?=\S)}{$1\n}gi;
+
+  # Break JavaScript body from closing script tag.
+  $text =~ s{;\s*(?=</script>)}{;\n}gi;
+
+  # Inline non-src script body formatting.
+  my $out     = '';
+  my $pos     = 0;
+  my $matched = 0;
+
+  while ( $text =~ m{(<script\b(?![^>]*\bsrc\s*=)[^>]*>)(.*?)(</script>)}gis ) {
+    $matched++;
+
+    my $match_start = $-[0];
+    my $match_end   = $+[0];
+    my ( $open, $body, $close ) = ( $1, $2, $3 );
+
+    $out .= substr( $text, $pos, $match_start - $pos );
+
+    $body =~ s/\A\s+//;
+    $body =~ s/\s+\z//;
+
+    my $original_body = $body;
+
+    #     $body = $self->_js_format_text( $body, $matched );
+
+    my $note = '';
+
+  #     if ( $body ne $original_body ) {
+  #       $note = "<!-- -->"
+  #
+  #           . "<!--\t\tThis block has been reformatted from the original. -->"
+  #           . "<!--\t\tIf the JavaScript no longer runs, -->"
+  #           . "<!--\t\trerun with --javascript=off. -->"
+  #
+  #           . "<!-- -->";
+  #     }
+
+    $out .= "$open\n$note$body\n$close";
+    $pos = $match_end;
+  }
+
+  $out .= substr( $text, $pos );
+
+  if ( $matched ) {
+    $text = $out;
+  }
+
+  # Re-apply outer script block bookends after reconstruction.
+  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
+  $text =~ s{(</script>)\n*}{$1\n\n}gi;
+
+  return $text;
+}
+
+# js_beautify.pl version
+
+sub _js_format_text ( $self, $js ) {
+  warn "JS FORMATTER CALLED\n";
+  return '' unless defined $js && length $js;
+  warn "JS FORMATTER CALLED length=" . length( $js ) . "\n";
+
+  require IPC::Open3;
+  require IO::Select;
+  require Symbol;
+
+  #   my @cmd = ( 'npx', 'prettier', '--parser', 'babel' );
+  #   my @cmd = (
+  #               'npx', 'prettier', '--parser', 'babel', '--tab-width',
+  #               $self->{indent_width}, '--print-width', '9999', );
+  my @cmd = (
+              'js_beautify.pl',      '--indent_size', $self->{indent_width},
+              '--preserve_newlines', 1,               '-', );
+  my $err = Symbol::gensym();
+  my ( $in, $out );
+
+  my $pid = eval { IPC::Open3::open3( $in, $out, $err, @cmd ) };
+
+  if ( $@ ) {
+    warn "Cannot run prettier: $@";
+    return $js;
+  }
+
+  print {$in} $js;
+  close $in;
+
+  my ( $formatted, $errors ) = ( '', '' );
+  my $sel = IO::Select->new( $out, $err );
+
+  while ( my @ready = $sel->can_read ) {
+    for my $fh ( @ready ) {
+      my $buf = '';
+      my $len = sysread $fh, $buf, 8192;
+
+      if ( !defined $len ) {
+        if ( $!{EINTR} ) {
+          next;
+        }
+
+        $sel->remove( $fh );
+        next;
+      }
+
+      if ( $len == 0 ) {
+        $sel->remove( $fh );
+        next;
+      }
+
+      if ( fileno( $fh ) == fileno( $out ) ) {
+        $formatted .= $buf;
+      } else {
+        $errors .= $buf;
+      }
+    }
+  }
+
+  waitpid $pid, 0;
+  my $status = $? >> 8;
+
+  if ( $status != 0 ) {
+    warn "prettier failed with status $status; leaving script unchanged\n";
+    warn $errors if length $errors;
+    return $js;
+  }
+
+  $formatted =~ s/\s+\z//;
+
+  return length $formatted ? $formatted : $js;
+}
+
+
+# JavaScript::Beautifier version
+sub _js_format_text ( $self, $js ) {
+  return '' unless defined $js && length $js;
+
+  my $formatted = eval {
+    js_beautify(
+                 $js,
+                 {
+                  indent_size               => $self->{indent_width},
+                  indent_character          => ' ',
+                  preserve_newlines         => 1,
+                  space_after_anon_function => 0,
+                 } );
+  };
+  warn "JS beautified before="
+      . length( $js )
+      . " after="
+      . ( defined $formatted ? length( $formatted ) : 'undef' ) . "\n";
+  if ( $@ ) {
+    warn "JavaScript::Beautifier failed: $@";
+    return $js;
+  }
+
+  return $js unless defined $formatted && length $formatted;
+
+  $formatted =~ s/\s+\z//;
+
+  return $formatted;
+}
+
+
+sub _perltidy_compact_region ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @out = grep {/\S/} split /\n/, $text, -1;
+
+  return join "\n", @out;
+}
+
+sub _debug_has_lines_before_blank ( $self, $label, $text ) {
+  return unless defined $text;
+
+  if (
+    $text =~
+/lines_before.*?\n.*?%=\s*\$cv->\(\$line->\[0\],\s*\$line->\[1\]\).*?\n\s*%\s*\}\s*\
+n\n\s*%\s*if/s )
+  {
+    warn "BLANK PRESENT after $label\n";
+  } else {
+    warn "blank absent after $label\n";
   }
 
   return;
 }
 
-sub _base_strip_trailing_whitespace ( $self, $text ) {
-  $text = '' unless defined $text;
+sub _debug_lines_before_slice ( $self, $label, $text ) {
+  return unless defined $text;
 
-  $text =~ s/[ \t]+$//mg;
+  if ( $text =~ /(<table class="wide">.*?<\/table>)/s ) {
+    warn "\n--- $label ---\n$1\n--- end $label ---\n";
+  }
+
+  return;
+}
+
+sub _debug_script_slice ( $self, $label, $text ) {
+  return unless defined $text;
+
+  my $needle = '<script';
+  my $pos    = 0;
+  my $seen   = 0;
+
+  while ( ( $pos = index( lc( $text ), $needle, $pos ) ) >= 0 ) {
+    $seen++;
+
+    my $start = $pos - 20;
+    $start = 0 if $start < 0;
+
+    my $len   = 40;
+    my $slice = substr( $text, $start, $len );
+
+    $slice =~ s/\n/⏎\n/g;
+
+    warn "\n--- $label script#$seen pos=$pos ---\n$slice\n--- end $label
+script#$seen ---\n";
+
+    $pos += length $needle;
+  }
+
+  warn "\n--- $label no <script> found ---\n" if !$seen;
+
+  return;
+}
+
+sub _normalize_ep_multiline_deref_blocks ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @in = split /\n/, $text, -1;
+  my @out;
+
+  my $in_deref_header = 0;
+
+  for my $line ( @in ) {
+    if ( $in_deref_header && $line !~ /^\s*%/ && $line =~ /\S/ ) {
+      $line =~ s/^\s+//;
+      $line = "  % $line";
+    }
+
+    push @out, $line;
+
+    $in_deref_header = 0;
+
+    if ( $line =~ /^\s*%\s*(?:if|unless|for|foreach|while)\b.*\@\{\s*$/ ) {
+      $in_deref_header = 1;
+    }
+  }
+
+  return join "\n", @out;
+}
+
+sub _normalize_indented_output_lines ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  $text =~ s{^[ \t]+(?=%=)}{  }gm;
 
   return $text;
 }
 
-sub _base_visual_indent_adjust_for_tag ( $tag ) {
-  return 1 if defined $tag && $tag =~ /\A(?:table|tbody)\z/i;
+sub _perl_control_opener_complete ( $self, $code ) {
+  my $paren = 0;
+  my $brack = 0;
+  my $brace = 0;
+
+  my @chars = split //, $code;
+
+  for my $ch ( @chars ) {
+    if ( $ch eq '(' ) { $paren++;               next }
+    if ( $ch eq ')' ) { $paren-- if $paren > 0; next }
+
+    if ( $ch eq '[' ) { $brack++;               next }
+    if ( $ch eq ']' ) { $brack-- if $brack > 0; next }
+
+    if ( $ch eq '{' ) {
+      if ( $paren == 0 && $brack == 0 && $brace == 0 ) {
+        return 1;    # block opener
+      }
+
+      $brace++;
+      next;
+    }
+
+    if ( $ch eq '}' ) {
+      $brace-- if $brace > 0;
+      next;
+    }
+  }
+
   return 0;
 }
 
-sub _base_visual_indent_for_open_tag ( $tag, $level, $ep_level ) {
-  my $depth = $level + _base_effective_ep_indent( $ep_level );
+sub _separate_output_before_control ( $self, $text ) {
+  return '' unless defined $text && length $text;
+  $text =~
+      s{(^%=\s+[^\n]+)\n(%\s*(?:if|unless|for|foreach|while)\b)}{$1\n\n$2}gm;
 
-  if ( defined $tag && $tag =~ /\A(?:table|tbody)\z/i ) {
-    $depth-- if $depth > 0;
-  }
-
-  return $depth;
+  return $text;
 }
-
-sub _base_visual_indent_for_close_tag ( $tag, $level, $ep_level ) {
-  my $depth = $level + _base_effective_ep_indent( $ep_level );
-
-  if ( defined $tag && $tag =~ /\A(?:table|tbody)\z/i ) {
-    $depth-- if $depth > 0;
-  }
-
-  return $depth;
-}
-
-############################
-#
-# --columns operations
-#
-############################
-
-sub _cols_apply_column_expansion ( $self, $text ) {
-  my @lines = split /\n/, $text, -1;
-  my @out;
-
-  for my $line ( @lines ) {
-    unless ( $self->_cols_line_exceeds_columns( $line ) ) {
-      push @out, $line;
-      next;
-    }
-
-    my $expanded = $self->_cols_expand_long_inline_style_tag( $line )
-        // $self->_cols_expand_long_simple_nested_tag_line( $line )
-        // $self->_cols_expand_long_generic_opening_tag( $line )
-        // $self->_cols_expand_long_comment_line( $line );
-
-    if ( defined $expanded ) {
-      push @out, split /\n/, $expanded, -1;
-    }
-    else {
-      push @out, $line;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _cols_comment_split_candidates ( $body ) {
-  return () unless defined $body && length $body;
-
-  my @cand;
-  my $len = length $body;
-
-  for my $i ( 0 .. $len - 1 ) {
-    my $ch = substr( $body, $i, 1 );
-
-    if ( $ch =~ /[;,.!?]/ ) {
-      push @cand, $i;
-      next;
-    }
-
-    if ( $ch eq '/' || $ch eq '\\' ) {
-      my $prev = $i > 0        ? substr( $body, $i - 1, 1 ) : ' ';
-      my $next = $i < $len - 1 ? substr( $body, $i + 1, 1 ) : ' ';
-
-      next if $prev !~ /\s/;
-      next if $next !~ /\s/;
-
-      push @cand, $i;
-      next;
-    }
-  }
-
-  return @cand;
-}
-
-sub _cols_expand_long_comment_line ( $self, $line ) {
-  return undef unless defined $line;
-  return undef unless $self->_cols_line_exceeds_columns( $line );
-
-  my ( $indent ) = $line =~ /^(\s*)/;
-  $indent //= '';
-
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
-
-  return undef unless $trimmed =~ /^<!--\s*(.*?)\s*-->$/;
-  my $body = $1;
-  $body =~ s/^\s+//;
-  $body =~ s/\s+$//;
-
-  return undef unless length $body;
-  return undef if $body =~ /\n/;
-
-  my $available = $self->{columns} - length( $indent ) - length( '<!--  -->' );
-  return undef if $available < 8;
-
-  # pass 1: punctuation-aware split
-  my @parts = $self->_cols_split_long_comment_body( $body, $available );
-
-  # pass 2: fallback to word-boundary wrapping into repeated comment lines
-  if ( @parts <= 1 && length( $body ) > $available ) {
-    @parts = $self->_cols_wrap_comment_body_words( $body, $available );
-  }
-
-  return undef unless @parts > 1;
-
-  my @out = map { $indent . '<!-- ' . $_ . ' -->' } @parts;
-  return join "\n", @out;
-}
-
-sub _cols_expand_long_generic_opening_tag ( $self, $line ) {
-  return undef unless defined $line;
-  return undef unless $self->_cols_line_exceeds_columns( $line );
-
-  my ( $indent ) = $line =~ /^(\s*)/;
-  $indent //= '';
-
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
-
-  # only pure one-line opening tags,
-  # not closers, comments, doctype, or self-closing
-  return undef unless $trimmed =~ /^<([A-Za-z][A-Za-z0-9:_-]*)\b(.*)>$/;
-  my ( $tag, $attrs ) = ( $1, $2 );
-
-  return undef if $trimmed =~ m{^</};
-  return undef if $trimmed =~ /^<!/;
-  return undef if $trimmed =~ /\/>\s*$/;
-
-  # let preferred-element and style-specific logic own their cases
-  return undef if $tag   =~ /\A(?:form|input|button|a)\z/i;
-  return undef if $attrs =~ /\bstyle="/;
-
-  my @attrs = _attrib_split_html_attributes( $attrs );
-  return undef unless @attrs >= 2;
-
-  my $step      = ' ' x $self->{indent_width};
-  my $attr_step = $step . $step;
-
-  my @out;
-  my $first = shift @attrs;
-
-  push @out, $indent . "<$tag " . $first;
-
-  while ( @attrs > 1 ) {
-    push @out, $indent . $attr_step . shift @attrs;
-  }
-  push @out, $indent . $attr_step . $attrs[0] . '>';
-
-  return join "\n", @out;
-}
-
-sub _cols_expand_long_inline_style_tag ( $self, $line ) {
-  return undef unless defined $line;
-  return undef unless $self->_cols_line_exceeds_columns( $line );
-
-  my ( $indent ) = $line =~ /^(\s*)/;
-  $indent //= '';
-
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
-
-  return undef unless $trimmed =~ /^<([A-Za-z][A-Za-z0-9:_-]*)\b/;
-  return undef unless $trimmed =~ /^(.*?\bstyle=")([^"]+)(".*)$/;
-
-  my ( $before, $style, $after ) = ( $1, $2, $3 );
-
-  return undef if $style =~ /<[%=]?/;
-
-  my @decls = _attrib_split_style_declarations( $style );
-  return undef unless @decls >= 2;
-
-  my @out;
-
-  push @out, $indent . $before;
-  push @out, map { $indent . $_ } @decls;
-  $out[-1] .= $after;
-
-  return join "\n", @out;
-}
-
-sub _cols_expand_long_simple_nested_tag_line ( $self, $line ) {
-  return undef unless defined $line;
-  return undef unless $self->_cols_line_exceeds_columns( $line );
-
-  my $trimmed = $line;
-  $trimmed =~ s/^\s+//;
-  $trimmed =~ s/\s+$//;
-
-  return undef if $trimmed =~ /^</ ? 0 : 1;
-  return undef if $trimmed =~ /<!--|<!DOCTYPE/i;
-
-  # very narrow pattern:
-  # <outer><inner>content</inner></outer>
-  return undef unless $trimmed =~
-
-m{^<([A-Za-z][A-Za-z0-9:_-]*)>(<([A-Za-z][A-Za-z0-9:_-]*)>)(.*?)(</\3>)(</\1>)$};
-
-  my ( $outer, $inner_open, $inner, $content, $inner_close, $outer_close ) =
-      ( $1, $2, $3, $4, $5, $6 );
-
-  return undef unless length $content;
-
-  # no nested real html inside content
-  return undef if $content =~ /<(?![%=])/;
-  return undef if $content =~ /^\s*$/;
-
-  return join "\n",
-      "<$outer>",
-      "  $inner_open",
-      "    $content",
-      "  $inner_close",
-      $outer_close;
-}
-
-sub _cols_line_exceeds_columns ( $self, $line ) {
-  return 0 unless defined $self->{columns} && $self->{columns};
-  return length( $line ) > $self->{columns} ? 1 : 0;
-}
-
-sub _cols_split_long_comment_body ( $self, $body, $available ) {
-  return ( $body ) unless defined $body      && length $body;
-  return ( $body ) unless defined $available && $available > 0;
-
-  my @parts;
-  my $rest = $body;
-
-  while ( length( $rest ) > $available ) {
-    my @cand = _cols_comment_split_candidates( $rest );
-    @cand = grep { $_ < $available } @cand;
-
-    last unless @cand;
-
-    my $split_at = $cand[-1];
-    my $left     = substr( $rest, 0, $split_at + 1 );
-    my $right    = substr( $rest, $split_at + 1 );
-
-    $left  =~ s/\s+$//;
-    $right =~ s/^\s+//;
-
-    last unless length $left;
-    push @parts, $left;
-    $rest = $right;
-  }
-
-  push @parts, $rest if length $rest;
-  return @parts;
-}
-
-sub _cols_wrap_comment_body_words ( $self, $body, $available ) {
-  return ( $body ) unless defined $body      && length $body;
-  return ( $body ) unless defined $available && $available > 0;
-
-  my @words = grep { length $_ } split /\s+/, $body;
-  return ( $body ) unless @words;
-
-  my @parts;
-  my $line = shift @words;
-
-  for my $word ( @words ) {
-    my $try = $line . ' ' . $word;
-
-    if ( length( $try ) <= $available ) {
-      $line = $try;
-    }
-    else {
-      push @parts, $line;
-      $line = $word;
-    }
-  }
-
-  push @parts, $line if length $line;
-  return @parts;
-}
-
-1;
-
-__END__
-
-=pod
-=head1 NAME
-
-mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
-
-=head1 SYNOPSIS
-
-    mojo-prettytidy file.html.ep
-    mojo-prettytidy --config path/to/config.json file.html.ep
-    mojo-prettytidy --stdin < file.html.ep
-    mojo-prettytidy --output parsed.file.html.ep file.html.ep
-    mojo-prettytidy --check file.html.ep
-    mojo-prettytidy --diff file.html.ep
-    mojo-prettytidy --write file.html.ep
-    mojo-prettytidy --write --backup file.html.ep
-    mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
-    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
-    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
-    mojo-prettytidy templates --prefix pt. --outdir parsed
-    mojo-prettytidy --version
-
-=head1 DESCRIPTION
-
-C<mojo-prettytidy> provides command-line access to L<Mojo::PrettyTidy>.
-
-The command is intended to be editor-friendly and suitable for use
-from tools such as Kate in a manner similar to C<perltidy>.
-
-By default, the formatted result is written to standard output.
-
-=head1 OPTIONS
-
-=head2 --write, -w
-
-Rewrite the input file in place.
-
-=head2 --backup
-
-When used with C<--write>, create a backup of the original file before
-rewriting it.
-
-=head2 --backup-ext
-
-When used with C<--write --backup>, choose the backup suffix.
-The default is C<.bak>.
-
-=head2 --check, -c
-
-Exit with status C<0> if the input file is already tidy, or C<1> if
-changes would be made.
-
-This option requires a single input file.
-
-=head2 --config
-
-Load default options from the specified JSON config file.
-
-If no explicit C<--config> is given, C<mojo-prettytidy> will
-auto-load C<.mojo-prettytidy.json> from the current working
-directory if that file exists.
-
-Command-line options override config values.
-
-=head2 --diff
-
-Print a minimal unified-style diff showing what would change, and exit
-with status C<0> if no changes are needed or C<1> if differences are
-found.
-
-This option requires a single input file.
-
-=head2 --output, -o
-
-Write the tidied result to the specified output file instead of standard
-output.
-
-This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
-It is intended for single-input use.
-
-=head2 --prefix, --pre
-
-When writing multiple outputs, prefix generated filenames with the
-specified string.
-
-=head2 --outdir
-
-When writing multiple outputs, place generated files in the specified
-directory.
-
-=head2 --stdin
-
-Read input from standard input and write formatted output to standard
-output.
-
-=head2 --version, -v
-
-Print the program version and exit.
-
-=head2 --help, -h
-
-Show brief help.
-
-=head2 --man
-
-Show full documentation.
-
-=head1 CONFIG FILE
-
-Config files use JSON object syntax. Supported keys currently include:
-
-=over 4
-
-=item * C<indent_width>
-
-=item * C<tab_width>
-
-=item * C<prefix>
-
-=item * C<outdir>
-
-=back
-
-Example:
-
-    {
-      "prefix": "pt.",
-      "outdir": "share/samples/testing"
-    }
-
-=head1 DIRECTORY INPUT
-
-When a positional input is a directory, C<mojo-prettytidy> scans it
-non-recursively and processes matching C<.html.ep> files.
-
-When multiple input files are processed, use one of:
-
-=over 4
-
-=item * C<--write>
-
-Rewrite each file in place.
-
-=item * C<--prefix>
-
-Write sibling output files with prefixed names.
-
-=item * C<--outdir>
-
-Write generated files to the specified output directory.
-
-=back
-
-=head1 EXIT STATUS
-
-=over 4
-
-=item * C<0>
-
-Success, or no changes needed in C<--check> or C<--diff> mode.
-
-=item * C<1>
-
-Changes would be made in C<--check> mode, or differences were found in
-C<--diff> mode.
-
-=item * C<2>
-
-Command-line usage error.
-
-=back
-
-=head1 LICENSE
-
-Same terms as Perl itself.
-
-=head1 PROJECT HOME
-
-https://github.com/Harryb382003/PrettyTidy
 
 =cut

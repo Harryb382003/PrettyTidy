@@ -141,7 +141,7 @@ Current versions perform conservative cleanup:
 	•	handle multiline opening tags conservatively
 	•	handle multiline inline style="..." attributes conservatively
 
-Design notes
+Design notes:
 
 Mojo::PrettyTidy currently favors local readability over aggressive transformation.
 
@@ -151,6 +151,115 @@ In particular, it is intentionally conservative around:
 	•	script and style blocks
 	•	multiline inline attributes
 	•	multiline opening tags
+	
+JavaScript handler:
+
+PrettyTidy contains a conservative JavaScript handler for inline <script> blocks in 
+Mojolicious .html.ep templates.
+
+The goal is not for PrettyTidy itself to become a JavaScript formatter. Instead, 
+PrettyTidy treats JavaScript as a language island inside the template:
+
+1. detect inline <script> ... </script> blocks
+2. separate the script block cleanly from surrounding EP/HTML
+3. format the JavaScript body with JavaScript::Beautifier
+4. repair a small set of known modern-JavaScript token splits
+5. verify that known dangerous munges did not survive
+6. reinsert the script body into the template
+
+External scripts such as:
+
+<script src="/app.js"></script>
+
+are not JavaScript-formatted, because there is no inline body to format.
+
+Why this exists
+
+Mojolicious templates often contain small inline JavaScript blocks. When those 
+blocks are flattened into surrounding HTML/EP code, they can become difficult to 
+read:
+
+<script>'use strict';let current = '#context';function example(){...}</script>
+
+PrettyTidy attempts to make these blocks readable while keeping the rest of the 
+template formatter conservative.
+
+JavaScript::Beautifier
+
+PrettyTidy currently uses JavaScript::Beautifier, which keeps the implementation 
+Perl-native and avoids requiring Node, npm, npx, local node_modules, or 
+editor-specific PATH setup.
+
+The beautifier is called with PrettyTidy’s configured indentation width, so 
+JavaScript indentation follows the same internal indentation size as the rest of the 
+formatter.
+
+Modern JavaScript caveat
+
+JavaScript::Beautifier is older than many modern JavaScript syntax forms. Some 
+modern tokens may be split incorrectly by the beautifier. For example, arrow 
+functions may be transformed incorrectly:
+
+() => {
+
+may become:
+
+() = > {
+
+PrettyTidy currently detects and repairs a small set of known token splits:
+
+- =>
+- ?.
+- ??
+- ??=
+- ||=
+- &&=
+
+After repair, PrettyTidy checks whether any of those known munges remain. If a known 
+munge is detected, PrettyTidy leaves the original JavaScript body unchanged and 
+emits a warning naming the affected <script> block.
+
+Warning comment injection
+
+When PrettyTidy accepts a reformatted JavaScript body, it injects a visible comment 
+inside the script block:
+
+<script>
+<!-- -->
+<!--     This block has been reformatted from the original. -->
+<!--     If the JavaScript no longer runs, -->
+<!--     rerun with --javascript=off. -->
+<!-- -->
+
+...
+</script>
+
+This comment is only inserted when the emitted JavaScript body differs from the 
+original normalized body. If the JavaScript formatter appears to munge syntax and 
+PrettyTidy falls back to the original body, no reformatting comment is injected.
+
+Safety policy
+
+PrettyTidy’s JavaScript handler is intentionally conservative:
+
+- if JavaScript formatting succeeds cleanly, PrettyTidy uses the formatted body
+- if known JavaScript munging is detected, PrettyTidy keeps the original body
+- if formatting fails, PrettyTidy keeps the original body
+- PrettyTidy does not attempt to fully parse JavaScript itself
+
+This means some JavaScript blocks may remain unformatted. That is preferable to 
+producing readable JavaScript that no longer runs.
+
+Future option
+
+A future option is planned:
+
+--javascript on|off
+
+The default will be on.
+
+When disabled, PrettyTidy should leave JavaScript bodies unchanged, while still 
+allowing safe template-level handling around <script> blocks where appropriate.
 
 Perl version
 
