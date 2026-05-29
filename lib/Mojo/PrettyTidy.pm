@@ -458,29 +458,36 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
 sub _js_prebake ( $self, $js ) {
   return '' unless defined $js && length $js;
 
-  # Flattening can glue line comments to the following statement.
-  # Repair flattened JS line comments before beautification,
-  # by splitting before a likely JavaScript statement starter.
+# If flattening glued code/comment boundaries together, restore line-comment shape.
+  $js =~ s{;\s*(?=//)}{;\n}g;
+  $js =~ s{\{\s*(?=//)}{\{\n}g;
+  $js =~ s{\}\s*(?=//)}{\}\n}g;
+
+  # If a line comment is glued to the following likely code boundary, split it.
   $js =~ s{
-      (//[^\n]*?\S)
-      (?=
-        document\.
-      | window\.
-      | console\.
-      | const\s+
-      | let\s+
-      | var\s+
-      | if\s*\(
-      | for\s*\(
-      | while\s*\(
-      | return\b
-      | function\s+
-      | async\s+function\s+
-      | class\s+
-      | new\s+
-      | await\s+
-    )
-  }{$1\n}gx;
+  (//[^\n]*?\S)
+  (?=
+      document\.
+    | window\.
+    | console\.
+    | const\s+
+    | let\s+
+    | var\s+
+    | if\s*\(
+    | for\s*\(
+    | while\s*\(
+    | switch\s*\(
+    | return\b
+    | function\s+
+    | async\s+function\s+
+    | class\s+
+    | new\s+
+    | await\s+
+    | \}\s*else\b
+    | \}\s*catch\b
+    | \}\s*finally\b
+  )
+}{$1\n}gx;
 
   # Flattening can also glue a line comment to a block transition.
   # Example:
