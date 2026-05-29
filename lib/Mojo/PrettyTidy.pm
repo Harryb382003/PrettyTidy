@@ -448,11 +448,80 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
     return $original;
   }
 
-  return $js unless defined $formatted && length $formatted;
+  return $original unless defined $formatted && length $formatted;
+
+  $formatted = $self->_js_repair_known_munges( $js, $formatted );
+
+  if ( $self->_js_formatter_munged( $js, $formatted, $matched ) ) {
+    return $original;
+  }
 
   $formatted =~ s/\s+\z//;
 
   return $formatted;
+}
+
+sub _js_formatter_munged ( $self, $before, $after, $matched = undef ) {
+  return 0 if !defined $before || !defined $after;
+  return 0 if $before eq $after;
+
+  my @problems;
+
+  if ( $before =~ /=>/ && $after =~ /=\s+>/ ) {
+    push @problems, 'arrow function token => became = >';
+  }
+
+  if ( $before =~ /\?\./ && $after =~ /\?\s+\./ ) {
+    push @problems, 'optional chaining token ?. was split';
+  }
+
+  if ( $before =~ /\?\?/ && $after =~ /\?\s+\?/ ) {
+    push @problems, 'nullish coalescing token ?? was split';
+  }
+
+  if ( $before =~ /\?\?=/ && $after =~ /\?\s+\?\s*=/ ) {
+    push @problems, 'nullish assignment token ??= was split';
+  }
+
+  if ( $before =~ /\|\|=/ && $after =~ /\|\s+\|\s*=/ ) {
+    push @problems, 'logical OR assignment token ||= was split';
+  }
+
+  if ( $before =~ /&&=/ && $after =~ /&\s+&\s*=/ ) {
+    push @problems, 'logical AND assignment token &&= was split';
+  }
+
+  if (    $before =~ /\basync[ \t]+function\b/
+       && $after =~ /\basync[ \t]*\n[\t]*function\b/ )
+  {
+    push @problems, 'async function was split across lines';
+  }
+
+  if ( $before =~ m{//[^\n]*\n\s*\S} ) {
+    for my $line ( split /\n/, $after ) {
+      if (
+        $line =~
+m{//[^\n]*[A-Za-z0-9_\)](?:document\.|window\.|console\.|const\s+|let\s+|var\s+|if\s
+*\(|for\s*\(|while\s*\(|return\b|function\s+|async\s+function\s+|class\s+|new\s+)}
+          )
+      {
+        push @problems, 'line comment may have swallowed following JavaScript';
+        last;
+      }
+    }
+  }
+  return 0 if !@problems;
+
+  my $where = defined $matched ? " in <script> block $matched" : '';
+
+  warn "PrettyTidy JavaScript formatter may have munged syntax$where;\n"
+      . "\tleaving original JavaScript unchanged:\n";
+
+  for my $problem ( @problems ) {
+    warn "  - $problem\n";
+  }
+
+  return 1;
 }
 
 sub _js_prebake ( $self, $js ) {
@@ -478,8 +547,8 @@ sub _js_prebake ( $self, $js ) {
     | while\s*\(
     | switch\s*\(
     | return\b
-    | function\s+
     | async\s+function\s+
+    | function\s+
     | class\s+
     | new\s+
     | await\s+
@@ -505,16 +574,52 @@ sub _js_prebake ( $self, $js ) {
   # Do not split semicolons inside for (...) headers.
   $js =~ s{;\s*(?=(?:const|let|var)\s+)}{;\n}g;
   $js =~ s{;\s*(?=(?:if|for|while|switch|try|catch|finally)\b)}{;\n}g;
-  $js =~ s{;\s*(?=(?:function|async\s+function|class)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:async\s+function|function|class)\s+)}{;\n}g;
   $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
   $js =~ s{;\s*(?=return\b)}{;\n}g;
 
   # Function/block boundaries commonly glued by flattening.
   $js =~ s{\}\s*(?=(?:const|let|var)\s+)}{\}\n}g;
-  $js =~ s{\}\s*(?=(?:function|async\s+function|class)\s+)}{\}\n}g;
+  $js =~ s{\}\s*(?=(?:async\s+function|function|class)\s+)}{\}\n}g;
   $js =~ s{\}\s*(?=(?:document|window|console)\.)}{\}\n}g;
 
   return $js;
+}
+
+sub _js_repair_known_munges ( $self, $before, $after ) {
+  return $after if !defined $before || !defined $after;
+  return $after if $before eq $after;
+
+  if ( $before =~ /=>/ ) {
+    $after =~ s/=\s+>/=>/g;
+    $after =~ s/=>\s*\{/=> {/g;
+  }
+
+  if ( $before =~ /\?\?=/ ) {
+    $after =~ s/\?\s+\?\s*=/??=/g;
+  }
+
+  if ( $before =~ /\?\?/ ) {
+    $after =~ s/\?\s+\?/??/g;
+  }
+
+  if ( $before =~ /\?\./ ) {
+    $after =~ s/\?\s+\./?./g;
+  }
+
+  if ( $before =~ /\|\|=/ ) {
+    $after =~ s/\|\s+\|\s*=/||=/g;
+  }
+
+  if ( $before =~ /&&=/ ) {
+    $after =~ s/&\s+&\s*=/&&=/g;
+  }
+
+  if ( $before =~ /\basync\s+function\b/ ) {
+    $after =~ s/\basync\s*\n\s*function\b/async function/g;
+  }
+
+  return $after;
 }
 
 sub _perltidy_ensure_tmp_dir ( $self ) {
@@ -1030,101 +1135,6 @@ sub tidy ( $self, $input ) {
 ##########################################################################
 #                 These mignt not be in use
 ##########################################################################
-
-sub _js_formatter_munged ( $self, $before, $after, $matched = undef ) {
-  return 0 if !defined $before || !defined $after;
-  return 0 if $before eq $after;
-
-  my @problems;
-
-  if ( $before =~ /=>/ && $after =~ /=\s+>/ ) {
-    push @problems, 'arrow function token => became = >';
-  }
-
-  if ( $before =~ /\?\./ && $after =~ /\?\s+\./ ) {
-    push @problems, 'optional chaining token ?. was split';
-  }
-
-  if ( $before =~ /\?\?/ && $after =~ /\?\s+\?/ ) {
-    push @problems, 'nullish coalescing token ?? was split';
-  }
-
-  if ( $before =~ /\?\?=/ && $after =~ /\?\s+\?\s*=/ ) {
-    push @problems, 'nullish assignment token ??= was split';
-  }
-
-  if ( $before =~ /\|\|=/ && $after =~ /\|\s+\|\s*=/ ) {
-    push @problems, 'logical OR assignment token ||= was split';
-  }
-
-  if ( $before =~ /&&=/ && $after =~ /&\s+&\s*=/ ) {
-    push @problems, 'logical AND assignment token &&= was split';
-  }
-
-  if (    $before =~ /\basync[ \t]+function\b/
-       && $after =~ /\basync[ \t]*\n[\t]*function\b/ )
-  {
-    push @problems, 'async function was split across lines';
-  }
-
-  if ( $before =~ m{//[^\n]*\n\s*\S} ) {
-    for my $line ( split /\n/, $after ) {
-      if (
-        $line =~
-m{//[^\n]*[A-Za-z0-9_\)](?:document\.|window\.|console\.|const\s+|let\s+|var\s+|if\s
-*\(|for\s*\(|while\s*\(|return\b|function\s+|async\s+function\s+|class\s+|new\s+)}
-          )
-      {
-        push @problems, 'line comment may have swallowed following JavaScript';
-        last;
-      }
-    }
-  }
-  return 0 if !@problems;
-
-  my $where = defined $matched ? " in <script> block $matched" : '';
-
-  warn "PrettyTidy JavaScript formatter may have munged syntax$where;\n"
-      . "\tleaving original JavaScript unchanged:\n";
-
-  for my $problem ( @problems ) {
-    warn "  - $problem\n";
-  }
-
-  return 1;
-}
-
-sub _js_repair_known_munges ( $self, $before, $after ) {
-  return $after if !defined $before || !defined $after;
-  return $after if $before eq $after;
-
-  if ( $before =~ /=>/ ) {
-    $after =~ s/=\s+>/=>/g;
-    $after =~ s/=>\s*\{/=> {/g;
-  }
-
-  if ( $before =~ /\?\?=/ ) {
-    $after =~ s/\?\s+\?\s*=/??=/g;
-  }
-
-  if ( $before =~ /\?\?/ ) {
-    $after =~ s/\?\s+\?/??/g;
-  }
-
-  if ( $before =~ /\?\./ ) {
-    $after =~ s/\?\s+\./?./g;
-  }
-
-  if ( $before =~ /\|\|=/ ) {
-    $after =~ s/\|\s+\|\s*=/||=/g;
-  }
-
-  if ( $before =~ /&&=/ ) {
-    $after =~ s/&\s+&\s*=/&&=/g;
-  }
-
-  return $after;
-}
 
 sub _perltidy_compact_region ( $self, $text ) {
   return '' unless defined $text && length $text;
