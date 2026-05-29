@@ -361,10 +361,57 @@ sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
 sub _isolate_script_blocks ( $self, $text ) {
   return '' unless defined $text && length $text;
 
-  # Put script blocks on their own visual island.
+  # Basic boundary cleanup before extraction.
   $text =~ s{\n*(?=<script\b)}{\n\n}gi;
   $text =~ s{(<script\b[^>]*>)\s*(?=\S)}{$1\n}gi;
-  $text =~ s{;[ \t]*(?=</script>)}{;\n}gi;
+  $text =~ s{([^\n])(?=</script>)}{$1\n}gi;
+  $text =~ s{(</script>)\n*}{$1\n\n}gi;
+
+  my $out     = '';
+  my $pos     = 0;
+  my $matched = 0;
+
+  while ( $text =~ m{(<script\b(?![^>]*\bsrc\s*=)[^>]*>)(.*?)(</script>)}gis ) {
+    $matched++;
+
+    my $match_start = $-[0];
+    my $match_end   = $+[0];
+
+    my ( $open, $body, $close ) = ( $1, $2, $3 );
+
+    $out .= substr( $text, $pos, $match_start - $pos );
+
+    $body =~ s/\A\s+//;
+    $body =~ s/\s+\z//;
+
+    my $original_body = $body;
+
+    $body = $self->_js_format_text( $body, $matched );
+
+    my $note = '';
+    if ( $body ne $original_body ) {
+      $note = "\n"
+          . "<!--\n"
+          . "This block has been reformatted from the original.\n"
+          . "If the JavaScript no longer runs,\n"
+          . "rerun with --javascript=off.\n"
+          . "-->\n\n";
+    }
+
+    $out .= "$open\n$note$body\n$close";
+
+    $pos = $match_end;
+  }
+
+  $out .= substr( $text, $pos );
+
+  if ( $matched ) {
+    $text = $out;
+  }
+
+  # Re-apply boundary cleanup after reconstruction.
+  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
+  $text =~ s{(<script\b[^>]*>)\s*(?=\S)}{$1\n}gi;
   $text =~ s{([^\n])(?=</script>)}{$1\n}gi;
   $text =~ s{(</script>)\n*}{$1\n\n}gi;
 
@@ -376,7 +423,7 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
 
   my $original = $js;
 
-  #   $js = $self->_js_prebake( $js );
+  $js = $self->_js_prebake( $js );
 
   #   if ( $js =~ /reset UI/ ) {
   #     my $slice = $js;
@@ -406,6 +453,61 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
   $formatted =~ s/\s+\z//;
 
   return $formatted;
+}
+
+sub _js_prebake ( $self, $js ) {
+  return '' unless defined $js && length $js;
+
+  # Flattening can glue line comments to the following statement.
+  # Repair flattened JS line comments before beautification,
+  # by splitting before a likely JavaScript statement starter.
+  $js =~ s{
+      (//[^\n]*?\S)
+      (?=
+        document\.
+      | window\.
+      | console\.
+      | const\s+
+      | let\s+
+      | var\s+
+      | if\s*\(
+      | for\s*\(
+      | while\s*\(
+      | return\b
+      | function\s+
+      | async\s+function\s+
+      | class\s+
+      | new\s+
+      | await\s+
+    )
+  }{$1\n}gx;
+
+  # Flattening can also glue a line comment to a block transition.
+  # Example:
+  #   // comment} else {
+  $js =~ s{
+  (//[^\n]*?\S)
+  (?=
+      \}\s*else\b
+    | \}\s*catch\b
+    | \}\s*finally\b
+  )
+}{$1\n}gx;
+
+  # Conservative statement boundaries.
+  # Do not split semicolons inside for (...) headers.
+  $js =~ s{;\s*(?=(?:const|let|var)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:if|for|while|switch|try|catch|finally)\b)}{;\n}g;
+  $js =~ s{;\s*(?=(?:function|async\s+function|class)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
+  $js =~ s{;\s*(?=return\b)}{;\n}g;
+
+  # Function/block boundaries commonly glued by flattening.
+  $js =~ s{\}\s*(?=(?:const|let|var)\s+)}{\}\n}g;
+  $js =~ s{\}\s*(?=(?:function|async\s+function|class)\s+)}{\}\n}g;
+  $js =~ s{\}\s*(?=(?:document|window|console)\.)}{\}\n}g;
+
+  return $js;
 }
 
 sub _perltidy_ensure_tmp_dir ( $self ) {
@@ -902,12 +1004,15 @@ sub tidy ( $self, $input ) {
 
   $out = $self->_indent_output_lines_in_ep_blocks( $out );
   $out = $self->_reemit_begin_blocks( $out );
+
   $out = $self->_separate_begin_blocks( $out );
   $out = $self->_separate_brace_blocks( $out );
   $out = $self->_separate_initial_ep_statement_block( $out );
   $out = $self->_separate_adjacent_ep_blocks( $out );
+
   $out = $self->_html_separate_blocks( $out );
   $out = $self->_html_separate_landmarks( $out );
+
   $out = $self->_compact_blank_runs( $out );
 
   return $out;
@@ -915,8 +1020,9 @@ sub tidy ( $self, $input ) {
 
 1;
 
-=pod
-
+##########################################################################
+#                 These mignt not be in use
+##########################################################################
 
 sub _js_formatter_munged ( $self, $before, $after, $matched = undef ) {
   return 0 if !defined $before || !defined $after;
@@ -978,52 +1084,7 @@ m{//[^\n]*[A-Za-z0-9_\)](?:document\.|window\.|console\.|const\s+|let\s+|var\s+|
     warn "  - $problem\n";
   }
 
-  say;
-
   return 1;
-}
-
-sub _js_prebake ( $self, $js ) {
-  return '' unless defined $js && length $js;
-
-  # Flattening can glue line comments to the following statement.
-  # Repair flattened JS line comments before beautification,
-  # by splitting before a likely JavaScript statement starter.
-  $js =~ s{
-    (//[^\n]*?[A-Za-z0-9_])
-    (?=
-        document\.
-      | window\.
-      | console\.
-      | const\s+
-      | let\s+
-      | var\s+
-      | if\s*\(
-      | for\s*\(
-      | while\s*\(
-      | return\b
-      | function\s+
-      | async\s+function\s+
-      | class\s+
-      | new\s+
-      | await\s+
-    )
-  }{$1\n}gx;
-
-  # Conservative statement boundaries.
-  # Do not split semicolons inside for (...) headers.
-  $js =~ s{;\s*(?=(?:const|let|var)\s+)}{;\n}g;
-  $js =~ s{;\s*(?=(?:if|for|while|switch|try|catch|finally)\b)}{;\n}g;
-  $js =~ s{;\s*(?=(?:function|async\s+function|class)\s+)}{;\n}g;
-  $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
-  $js =~ s{;\s*(?=return\b)}{;\n}g;
-
-  # Function/block boundaries commonly glued by flattening.
-  $js =~ s{\}\s*(?=(?:const|let|var)\s+)}{\}\n}g;
-  $js =~ s{\}\s*(?=(?:function|async\s+function|class)\s+)}{\}\n}g;
-  $js =~ s{\}\s*(?=(?:document|window|console)\.)}{\}\n}g;
-
-  return $js;
 }
 
 sub _js_repair_known_munges ( $self, $before, $after ) {
@@ -1057,175 +1118,6 @@ sub _js_repair_known_munges ( $self, $before, $after ) {
 
   return $after;
 }
-
-sub _js_format_script_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  # Unhook script blocks from preceding payload before extraction.
-  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
-
-  # Break JavaScript body from opening script tag.
-  $text =~ s{(<script\b[^>]*>)\s*(?=\S)}{$1\n}gi;
-
-  # Break JavaScript body from closing script tag.
-  $text =~ s{;\s*(?=</script>)}{;\n}gi;
-
-  # Inline non-src script body formatting.
-  my $out     = '';
-  my $pos     = 0;
-  my $matched = 0;
-
-  while ( $text =~ m{(<script\b(?![^>]*\bsrc\s*=)[^>]*>)(.*?)(</script>)}gis ) {
-    $matched++;
-
-    my $match_start = $-[0];
-    my $match_end   = $+[0];
-    my ( $open, $body, $close ) = ( $1, $2, $3 );
-
-    $out .= substr( $text, $pos, $match_start - $pos );
-
-    $body =~ s/\A\s+//;
-    $body =~ s/\s+\z//;
-
-    my $original_body = $body;
-
-    #     $body = $self->_js_format_text( $body, $matched );
-
-    my $note = '';
-
-  #     if ( $body ne $original_body ) {
-  #       $note = "<!-- -->"
-  #
-  #           . "<!--\t\tThis block has been reformatted from the original. -->"
-  #           . "<!--\t\tIf the JavaScript no longer runs, -->"
-  #           . "<!--\t\trerun with --javascript=off. -->"
-  #
-  #           . "<!-- -->";
-  #     }
-
-    $out .= "$open\n$note$body\n$close";
-    $pos = $match_end;
-  }
-
-  $out .= substr( $text, $pos );
-
-  if ( $matched ) {
-    $text = $out;
-  }
-
-  # Re-apply outer script block bookends after reconstruction.
-  $text =~ s{\n*(?=<script\b)}{\n\n}gi;
-  $text =~ s{(</script>)\n*}{$1\n\n}gi;
-
-  return $text;
-}
-
-# js_beautify.pl version
-
-sub _js_format_text ( $self, $js ) {
-  warn "JS FORMATTER CALLED\n";
-  return '' unless defined $js && length $js;
-  warn "JS FORMATTER CALLED length=" . length( $js ) . "\n";
-
-  require IPC::Open3;
-  require IO::Select;
-  require Symbol;
-
-  #   my @cmd = ( 'npx', 'prettier', '--parser', 'babel' );
-  #   my @cmd = (
-  #               'npx', 'prettier', '--parser', 'babel', '--tab-width',
-  #               $self->{indent_width}, '--print-width', '9999', );
-  my @cmd = (
-              'js_beautify.pl',      '--indent_size', $self->{indent_width},
-              '--preserve_newlines', 1,               '-', );
-  my $err = Symbol::gensym();
-  my ( $in, $out );
-
-  my $pid = eval { IPC::Open3::open3( $in, $out, $err, @cmd ) };
-
-  if ( $@ ) {
-    warn "Cannot run prettier: $@";
-    return $js;
-  }
-
-  print {$in} $js;
-  close $in;
-
-  my ( $formatted, $errors ) = ( '', '' );
-  my $sel = IO::Select->new( $out, $err );
-
-  while ( my @ready = $sel->can_read ) {
-    for my $fh ( @ready ) {
-      my $buf = '';
-      my $len = sysread $fh, $buf, 8192;
-
-      if ( !defined $len ) {
-        if ( $!{EINTR} ) {
-          next;
-        }
-
-        $sel->remove( $fh );
-        next;
-      }
-
-      if ( $len == 0 ) {
-        $sel->remove( $fh );
-        next;
-      }
-
-      if ( fileno( $fh ) == fileno( $out ) ) {
-        $formatted .= $buf;
-      } else {
-        $errors .= $buf;
-      }
-    }
-  }
-
-  waitpid $pid, 0;
-  my $status = $? >> 8;
-
-  if ( $status != 0 ) {
-    warn "prettier failed with status $status; leaving script unchanged\n";
-    warn $errors if length $errors;
-    return $js;
-  }
-
-  $formatted =~ s/\s+\z//;
-
-  return length $formatted ? $formatted : $js;
-}
-
-
-# JavaScript::Beautifier version
-sub _js_format_text ( $self, $js ) {
-  return '' unless defined $js && length $js;
-
-  my $formatted = eval {
-    js_beautify(
-                 $js,
-                 {
-                  indent_size               => $self->{indent_width},
-                  indent_character          => ' ',
-                  preserve_newlines         => 1,
-                  space_after_anon_function => 0,
-                 } );
-  };
-  warn "JS beautified before="
-      . length( $js )
-      . " after="
-      . ( defined $formatted ? length( $formatted ) : 'undef' ) . "\n";
-  if ( $@ ) {
-    warn "JavaScript::Beautifier failed: $@";
-    return $js;
-  }
-
-  return $js unless defined $formatted && length $formatted;
-
-  $formatted =~ s/\s+\z//;
-
-  return $formatted;
-}
-
 
 sub _perltidy_compact_region ( $self, $text ) {
   return '' unless defined $text && length $text;
@@ -1363,5 +1255,3 @@ sub _separate_output_before_control ( $self, $text ) {
 
   return $text;
 }
-
-=cut
