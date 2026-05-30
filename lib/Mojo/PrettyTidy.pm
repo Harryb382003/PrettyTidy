@@ -298,13 +298,14 @@ sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
   my $indent    = ' ' x $self->{indent_width};
 
   for my $line ( split /\n/, $text, -1 ) {
-    my $kind   = $self->_ep_control( $line );
-    my $target = $level > 0 ? $indent x $level : '';
+    my $kind = $self->_ep_control( $line );
 
     if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
       $level-- if $level > 0;
-      $target = $level > 0 ? $indent x $level : '';
     }
+
+    my $target         = $level > 0 ? $indent x $level         : '';
+    my $payload_target = $level > 0 ? $indent x ( $level + 1 ) : '';
 
     if ( $line =~ /^\s*<script\b/i ) {
       if ( length $target ) {
@@ -313,7 +314,6 @@ sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
 
       $in_script = 1;
       push @out, $line;
-
       next;
     }
 
@@ -325,26 +325,39 @@ sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
 
         $in_script = 0;
         push @out, $line;
-
         next;
       }
 
       if ( length $line ) {
-        my $body_indent = $target . $indent;
-        $line = $body_indent . $line;
+        $line = $target . $indent . $line;
       }
 
       push @out, $line;
+      next;
+    }
+
+    # EP/code lines keep their own perltidy-derived indentation.
+    # Do not apply payload indentation to them.
+    if ( $line =~ /^\s*%/ ) {
+      push @out, $line;
+
+      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+        $level++;
+      }
 
       next;
     }
 
+    # Non-EP payload lines inside EP blocks get one extra visual indent.
     if ( $level > 0 && length $line ) {
       my $leading = '';
-      $leading = $1 if $line =~ /^(\s*)/;
 
-      if ( length( $leading ) < length( $target ) ) {
-        $line =~ s/^\s*/$target/;
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $payload_target ) ) {
+        $line =~ s/^\s*/$payload_target/;
       }
     }
 
@@ -492,7 +505,7 @@ sub _js_formatter_munged ( $self, $before, $after, $matched = undef ) {
   }
 
   if (    $before =~ /\basync[ \t]+function\b/
-       && $after =~ /\basync[ \t]*\n[\t]*function\b/ )
+       && $after =~ /\basync[ \t]*\n[ \t]*function\b/ )
   {
     push @problems, 'async function was split across lines';
   }
@@ -902,26 +915,36 @@ sub perltidy_template_from_region ( $self, $text ) {
       next;
     }
 
-    my $marker_re = qr/0;\s*# PrettyTidy:/;
+    # Template payload carried through perltidy as:
+    #
+    #   0; # PrettyTidy:<html...>
+    #
+    # Keep perltidy's leading indent before the payload, but remove
+    # the fake Perl marker itself.
+    if ( $line =~ /^(\s*)0;\s*# PrettyTidy:(.*)\z/ ) {
+      my ( $leading, $payload ) = ( $1, $2 );
 
-    if ( $line =~ /$marker_re/ ) {
-      my $after = $line;
-      $after =~ s/^.*?$marker_re//;
-
-      if ( $after !~ /\S/ ) {
+      if ( $payload !~ /\S/ ) {
         push @out, '';
         next;
       }
 
-      my $matched = $&;
-      my $pad     = ' ' x length( $matched );
-
-      $line =~ s/$marker_re/$pad/;
-      push @out, $line;
+      push @out, $leading . $payload;
       next;
     }
 
-    push @out, '% ' . $line;
+    # Real Perl code carried through perltidy.
+    #
+    # Preserve perltidy's leading/template indent before the EP marker,
+    # but keep exactly one space between "%" and the Perl code.
+    if ( $line =~ /^(\s*)(.*)\z/ ) {
+      my ( $leading, $code ) = ( $1, $2 );
+
+      $code =~ s/^\s+//;
+
+      push @out, $leading . '% ' . $code;
+      next;
+    }
   }
 
   return join "\n", @out;
@@ -972,8 +995,16 @@ sub _reemit_begin_blocks ( $self, $text ) {
     }
 
     if ( $level > 0 && length $line ) {
-      $line =~ s/^\s+//;
-      $line = ( $indent x $level ) . $line;
+      my $target  = $indent x $level;
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $target ) ) {
+        $line =~ s/^\s*/$target/;
+      }
     }
 
     push @out, $line;
@@ -1113,6 +1144,10 @@ sub tidy ( $self, $input ) {
 
   my @chunks = $self->_chunks_from_flat( $flat );
   my $out    = $self->perltidy_reemit_regions( @chunks );
+  $self->_debug_action_block_slice( 'FOOBY', $out );
+
+  $out = $self->_html_separate_blocks( $out );
+  $out = $self->_html_separate_landmarks( $out );
 
   $out = $self->_indent_output_lines_in_ep_blocks( $out );
   $out = $self->_reemit_begin_blocks( $out );
@@ -1122,9 +1157,6 @@ sub tidy ( $self, $input ) {
   $out = $self->_separate_initial_ep_statement_block( $out );
   $out = $self->_separate_adjacent_ep_blocks( $out );
 
-  $out = $self->_html_separate_blocks( $out );
-  $out = $self->_html_separate_landmarks( $out );
-
   $out = $self->_compact_blank_runs( $out );
 
   return $out;
@@ -1132,143 +1164,158 @@ sub tidy ( $self, $input ) {
 
 1;
 
-##########################################################################
-#                 These mignt not be in use
-##########################################################################
-
-sub _perltidy_compact_region ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  my @out = grep {/\S/} split /\n/, $text, -1;
-
-  return join "\n", @out;
-}
-
-sub _debug_has_lines_before_blank ( $self, $label, $text ) {
+sub _debug_action_block_slice ( $self, $label, $text ) {
   return unless defined $text;
 
-  if (
-    $text =~
-/lines_before.*?\n.*?%=\s*\$cv->\(\$line->\[0\],\s*\$line->\[1\]\).*?\n\s*%\s*\}\s*\
-n\n\s*%\s*if/s )
-  {
-    warn "BLANK PRESENT after $label\n";
-  } else {
-    warn "blank absent after $label\n";
-  }
-
-  return;
-}
-
-sub _debug_lines_before_slice ( $self, $label, $text ) {
-  return unless defined $text;
-
-  if ( $text =~ /(<table class="wide">.*?<\/table>)/s ) {
-    warn "\n--- $label ---\n$1\n--- end $label ---\n";
-  }
-
-  return;
-}
-
-sub _debug_script_slice ( $self, $label, $text ) {
-  return unless defined $text;
-
-  my $needle = '<script';
-  my $pos    = 0;
-  my $seen   = 0;
-
-  while ( ( $pos = index( lc( $text ), $needle, $pos ) ) >= 0 ) {
-    $seen++;
-
-    my $start = $pos - 20;
-    $start = 0 if $start < 0;
-
-    my $len   = 40;
-    my $slice = substr( $text, $start, $len );
-
+  if ( $text =~ /(% for my \$t .*?% \} else \{.*?<em>dev<\/em>.*?% \})/s ) {
+    my $slice = $1;
+    $slice =~ s/ /·/g;
     $slice =~ s/\n/⏎\n/g;
 
-    warn "\n--- $label script#$seen pos=$pos ---\n$slice\n--- end $label
-script#$seen ---\n";
-
-    $pos += length $needle;
+    warn
+"\n--- $label action-block ---\n$slice\n--- end $label action-block ---\n";
   }
-
-  warn "\n--- $label no <script> found ---\n" if !$seen;
 
   return;
 }
 
-sub _normalize_ep_multiline_deref_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  my @in = split /\n/, $text, -1;
-  my @out;
-
-  my $in_deref_header = 0;
-
-  for my $line ( @in ) {
-    if ( $in_deref_header && $line !~ /^\s*%/ && $line =~ /\S/ ) {
-      $line =~ s/^\s+//;
-      $line = "  % $line";
-    }
-
-    push @out, $line;
-
-    $in_deref_header = 0;
-
-    if ( $line =~ /^\s*%\s*(?:if|unless|for|foreach|while)\b.*\@\{\s*$/ ) {
-      $in_deref_header = 1;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _normalize_indented_output_lines ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  $text =~ s{^[ \t]+(?=%=)}{  }gm;
-
-  return $text;
-}
-
-sub _perl_control_opener_complete ( $self, $code ) {
-  my $paren = 0;
-  my $brack = 0;
-  my $brace = 0;
-
-  my @chars = split //, $code;
-
-  for my $ch ( @chars ) {
-    if ( $ch eq '(' ) { $paren++;               next }
-    if ( $ch eq ')' ) { $paren-- if $paren > 0; next }
-
-    if ( $ch eq '[' ) { $brack++;               next }
-    if ( $ch eq ']' ) { $brack-- if $brack > 0; next }
-
-    if ( $ch eq '{' ) {
-      if ( $paren == 0 && $brack == 0 && $brace == 0 ) {
-        return 1;    # block opener
-      }
-
-      $brace++;
-      next;
-    }
-
-    if ( $ch eq '}' ) {
-      $brace-- if $brace > 0;
-      next;
-    }
-  }
-
-  return 0;
-}
-
-sub _separate_output_before_control ( $self, $text ) {
-  return '' unless defined $text && length $text;
-  $text =~
-      s{(^%=\s+[^\n]+)\n(%\s*(?:if|unless|for|foreach|while)\b)}{$1\n\n$2}gm;
-
-  return $text;
-}
+##########################################################################
+#                 These are not in use
+##########################################################################
+#
+# sub _perltidy_compact_region ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @out = grep {/\S/} split /\n/, $text, -1;
+#
+#   return join "\n", @out;
+# }
+#
+# sub _debug_has_lines_before_blank ( $self, $label, $text ) {
+#   return unless defined $text;
+#
+#   if (
+#     $text =~
+# /lines_before.*?\n.*?%=\s*\$cv->\(\$line->\[0\],\s*\$line->\[1\]\).*?\n\s*%\s*\}\s*\
+# n\n\s*%\s*if/s )
+#   {
+#     warn "BLANK PRESENT after $label\n";
+#   } else {
+#     warn "blank absent after $label\n";
+#   }
+#
+#   return;
+# }
+#
+# sub _debug_lines_before_slice ( $self, $label, $text ) {
+#   return unless defined $text;
+#
+#   if ( $text =~ /(<table class="wide">.*?<\/table>)/s ) {
+#     warn "\n--- $label ---\n$1\n--- end $label ---\n";
+#   }
+#
+#   return;
+# }
+#
+# sub _debug_script_slice ( $self, $label, $text ) {
+#   return unless defined $text;
+#
+#   my $needle = '<script';
+#   my $pos    = 0;
+#   my $seen   = 0;
+#
+#   while ( ( $pos = index( lc( $text ), $needle, $pos ) ) >= 0 ) {
+#     $seen++;
+#
+#     my $start = $pos - 20;
+#     $start = 0 if $start < 0;
+#
+#     my $len   = 40;
+#     my $slice = substr( $text, $start, $len );
+#
+#     $slice =~ s/\n/⏎\n/g;
+#
+#     warn "\n--- $label script#$seen pos=$pos ---\n$slice\n--- end $label
+# script#$seen ---\n";
+#
+#     $pos += length $needle;
+#   }
+#
+#   warn "\n--- $label no <script> found ---\n" if !$seen;
+#
+#   return;
+# }
+#
+# sub _normalize_ep_multiline_deref_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @in = split /\n/, $text, -1;
+#   my @out;
+#
+#   my $in_deref_header = 0;
+#
+#   for my $line ( @in ) {
+#     if ( $in_deref_header && $line !~ /^\s*%/ && $line =~ /\S/ ) {
+#       $line =~ s/^\s+//;
+#       $line = "  % $line";
+#     }
+#
+#     push @out, $line;
+#
+#     $in_deref_header = 0;
+#
+#     if ( $line =~ /^\s*%\s*(?:if|unless|for|foreach|while)\b.*\@\{\s*$/ ) {
+#       $in_deref_header = 1;
+#     }
+#   }
+#
+#   return join "\n", @out;
+# }
+#
+# sub _normalize_indented_output_lines ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   $text =~ s{^[ \t]+(?=%=)}{  }gm;
+#
+#   return $text;
+# }
+#
+# sub _perl_control_opener_complete ( $self, $code ) {
+#   my $paren = 0;
+#   my $brack = 0;
+#   my $brace = 0;
+#
+#   my @chars = split //, $code;
+#
+#   for my $ch ( @chars ) {
+#     if ( $ch eq '(' ) { $paren++;               next }
+#     if ( $ch eq ')' ) { $paren-- if $paren > 0; next }
+#
+#     if ( $ch eq '[' ) { $brack++;               next }
+#     if ( $ch eq ']' ) { $brack-- if $brack > 0; next }
+#
+#     if ( $ch eq '{' ) {
+#       if ( $paren == 0 && $brack == 0 && $brace == 0 ) {
+#         return 1;    # block opener
+#       }
+#
+#       $brace++;
+#       next;
+#     }
+#
+#     if ( $ch eq '}' ) {
+#       $brace-- if $brace > 0;
+#       next;
+#     }
+#   }
+#
+#   return 0;
+# }
+#
+# sub _separate_output_before_control ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#   $text =~
+#       s{(^%=\s+[^\n]+)\n(%\s*(?:if|unless|for|foreach|while)\b)}{$1\n\n$2}gm;
+#
+#   return $text;
+# }
