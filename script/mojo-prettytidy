@@ -15,20 +15,22 @@ use lib 'lib';
 use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
 
-my $attributes         = 0;
+my $attributes         = 1;
 my $backup             = 0;
 my $backup_ext         = '.bak';
 my $check              = 0;
-my $cli_sourceview_set = 0;
-my $config_path        = '.mojo-prettytidy.json';
 my $cli_attributes_set = 0;
-my $cli_maxchars_set   = 0;
 my $cli_config_set     = 0;
+my $cli_javascript_set = 0;
+my $cli_maxchars_set   = 0;
 my $cli_outdir_set     = 0;
 my $cli_prefix_set     = 0;
+my $cli_sourceview_set = 0;
 my $columns            = 0;
+my $config_path        = '.mojo-prettytidy.json';
 my $diff               = 0;
 my $help               = 0;
+my $javascript         = 1;
 my $man                = 0;
 my $maxchars           = 0;
 my $outdir             = '';
@@ -40,19 +42,20 @@ my $version            = 0;
 my $write              = 0;
 
 GetOptions(
-  'attributes|attrib|a' => sub { $attributes = 1; $cli_attributes_set = 1; },
-  'backup'              => \$backup,
-  'backup-ext=s'        => \$backup_ext,
-  'check'               => \$check,
-  'columns|cols|c=i'    => \$columns,
-  'config=s'            => sub ( $opt, $val ) {
+  'attributes|attrib|a!' => sub { $attributes = 1; $cli_attributes_set = 1; },
+  'backup'               => \$backup,
+  'backup-ext=s'         => \$backup_ext,
+  'check'                => \$check,
+  'columns|cols|c=i'     => \$columns,
+  'config=s'             => sub ( $opt, $val ) {
     $config_path    = $val;
     $cli_config_set = 1;
   },
-  'diff'       => \$diff,
-  'help|h'     => \$help,
-  'man'        => \$man,
-  'maxchars:i' => sub ( $opt, $val ) {
+  'diff'          => \$diff,
+  'help|h'        => \$help,
+  'javascript|j!' => \$javascript,
+  'man'           => \$man,
+  'maxchars:i'    => sub ( $opt, $val ) {
     $cli_maxchars_set = 1;
     $maxchars         = defined $val ? $val : 1;
   },
@@ -96,6 +99,9 @@ if ( $cli_config_set ) {
 
 $attributes = $cfg->{attributes}
     if exists $cfg->{attributes} && !$cli_attributes_set;
+
+$javascript = $cfg->{javascript}
+    if exists $cfg->{javascript} && !$cli_javascript_set;
 
 $maxchars = $cfg->{maxchars}
     if exists $cfg->{maxchars} && !$cli_maxchars_set;
@@ -164,6 +170,9 @@ my $pt = Mojo::PrettyTidy->new(
 #                                 (
 #                                   $tab_width ? ( tab_width => $tab_width ) : ()
 #                                 ),
+
+  attributes => $attributes,
+  javascript => $javascript,
   ( $columns    ? ( columns    => $columns )  : () ),
   ( $attributes ? ( attributes => 1 )         : () ),
   ( $maxchars   ? ( maxchars   => $maxchars ) : () ),
@@ -172,7 +181,7 @@ my $pt = Mojo::PrettyTidy->new(
 if ( $stdin ) {
   my $input = do { local $/; <STDIN> };
   _warn_long_lines( $input, 'STDIN', $sourceview ) if !$maxchars;
-  $pt->debug_perltidy_file_name( 'stdin' );
+  $pt->ep_source_file( 'stdin' );
   my $output = $pt->tidy( $input );
 
   if ( $check ) {
@@ -215,7 +224,7 @@ if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
   my $input = _slurp( $file );
   _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
 
-  $pt->debug_perltidy_file_name( $file );
+  $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
   if ( $check ) {
     exit( $output eq $input ? 0 : 1 );
@@ -260,7 +269,7 @@ if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
 for my $file ( @files ) {
   my $input = _slurp( $file );
   _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
-  $pt->debug_perltidy_file_name( $file );
+  $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
 
   if ( $write ) {
@@ -373,6 +382,7 @@ sub _validate_config ( $cfg, $path ) {
       outdir
       columns
       attributes
+      javascript
       maxchars
       sourceview
   );
@@ -440,11 +450,11 @@ mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
 =head1 SYNOPSIS
 
     mojo-prettytidy file.html.ep
-    mojo-prettytidy --config path/to/config.json file.html.ep
-    mojo-prettytidy --stdin < file.html.ep
-    mojo-prettytidy --output parsed.file.html.ep file.html.ep
     mojo-prettytidy --check file.html.ep
+    mojo-prettytidy --config path/to/config.json file.html.ep
     mojo-prettytidy --diff file.html.ep
+    mojo-prettytidy --output parsed.file.html.ep file.html.ep
+    mojo-prettytidy --stdin < file.html.ep
     mojo-prettytidy --write file.html.ep
     mojo-prettytidy --write --backup file.html.ep
     mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep

@@ -4,6 +4,10 @@ use v5.40.0;
 use feature 'signatures';
 
 use common::sense;
+use Cwd;
+use File::Path qw/make_path/;
+use File::Basename;
+use File::Spec;
 use JavaScript::Beautifier qw/js_beautify/;
 
 our $VERSION = '0.01';
@@ -50,36 +54,28 @@ sub _chunks_from_flat ( $self, $text ) {
   return @chunks;
 }
 
-sub _compact_blank_runs ( $self, $text ) {
-  return '' unless defined $text && length $text;
+sub _debug_perltidy_cleanup_file ( $self, $name ) {
+  return unless defined $name && length $name;
 
-  $text =~ s/\n{3,}/\n\n/g;
+  my $path = File::Spec->catfile( 'tmp', 'perltidy', $name );
 
-  return $text;
+  if ( -e $path ) {
+    unlink $path or warn "Could not remove $path: $!";
+  }
+
+  return;
 }
 
-sub debug_perltidy_file_name ( $self, $file ) {
-  $self->{debug_perltidy_file_name} = $file if defined $file && length $file;
-  return $self;
-}
+sub _debug_perltidy_write_file ( $self, $idx, $perl ) {
+  my $dir = File::Spec->catdir( 'tmp', 'perltidy' );
 
-sub debug_perltidy_write_file ( $self, $idx, $perl ) {
-  require File::Basename;
+  if ( !-d $dir ) { File::Path::make_path( $dir ); }
 
-  my $dir = $self->_perltidy_ensure_tmp_dir;
+  my $path = File::Spec->catfile( $dir, sprintf 'pt-region-%03d.pl', $idx );
 
-  my $source = $self->{debug_perltidy_file_name} // 'unknown';
-  my $base   = File::Basename::basename( $source );
-
-  $base =~ s/[^A-Za-z0-9_.-]+/_/g;
-
-  my $path = sprintf '%s/pt.%s_%03d.pl', $dir, $base, $idx;
-
-  open my $fh, '>', $path
-      or die "Cannot write perltidy debug input '$path': $!";
-
+  open my $fh, '>', $path or die "Cannot write $path: $!";
   print {$fh} $perl;
-  close $fh;
+  close $fh or die "Cannot close $path: $!";
 
   return $path;
 }
@@ -154,7 +150,7 @@ s{(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=
   $text =~ s{(%\s*(?:my|our|state|return)\b[^\n]*?;)(?=<[A-Za-z])}{$1\n\n}gx;
   $text =~ s{(%\s*\#[^\n]*?;)(?=<[A-Za-z])}{$1\n\n}gx;
 
-  $text = $self->_isolate_script_blocks( $text );
+  $text = $self->_js_prebake_scripts( $text );
 
   #   $text = $self->_normalize_ep_multiline_deref_blocks( $text );
 
@@ -201,19 +197,9 @@ sub _ep_control ( $self, $line ) {
   return 'statement';
 }
 
-sub _ep_logical_perl_code ( $self, $code ) {
-  return '' unless defined $code && length $code;
-
-  # Flattened native multiline EP continuation inside @{ ... }:
-  #   @{% $foo% }) {
-  # should be understood, for Perl scanning only, as:
-  #   @{$foo}) {
-  #
-  # Normal one-line Perl like @{$foo} does not match this and is left alone.
-  $code =~ s!\@\{\s*%\s*!\@\{!g;
-  $code =~ s{\s*%\s*(?=\}\)\s*\{)}{}g;
-
-  return $code;
+sub ep_source_file ( $self, $file ) {
+  $self->{ep_source_file} = $file if defined $file && length $file;
+  return $self;
 }
 
 sub _flatten ( $self, $text ) {
@@ -289,89 +275,7 @@ s{(<nav\b[^>]*\bnavbar\b[^>]*>)\n?(<a\b[^>]*\bnavbar-brand\b[^>]*>)}{$1\n\n$2}gi
   return $text;
 }
 
-sub _indent_output_lines_in_ep_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  my @out;
-  my $level     = 0;
-  my $in_script = 0;
-  my $indent    = ' ' x $self->{indent_width};
-
-  for my $line ( split /\n/, $text, -1 ) {
-    my $kind = $self->_ep_control( $line );
-
-    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
-      $level-- if $level > 0;
-    }
-
-    my $target         = $level > 0 ? $indent x $level         : '';
-    my $payload_target = $level > 0 ? $indent x ( $level + 1 ) : '';
-
-    if ( $line =~ /^\s*<script\b/i ) {
-      if ( length $target ) {
-        $line =~ s/^\s*/$target/;
-      }
-
-      $in_script = 1;
-      push @out, $line;
-      next;
-    }
-
-    if ( $in_script ) {
-      if ( $line =~ m{^\s*</script>}i ) {
-        if ( length $target ) {
-          $line =~ s/^\s*/$target/;
-        }
-
-        $in_script = 0;
-        push @out, $line;
-        next;
-      }
-
-      if ( length $line ) {
-        $line = $target . $indent . $line;
-      }
-
-      push @out, $line;
-      next;
-    }
-
-    # EP/code lines keep their own perltidy-derived indentation.
-    # Do not apply payload indentation to them.
-    if ( $line =~ /^\s*%/ ) {
-      push @out, $line;
-
-      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
-        $level++;
-      }
-
-      next;
-    }
-
-    # Non-EP payload lines inside EP blocks get one extra visual indent.
-    if ( $level > 0 && length $line ) {
-      my $leading = '';
-
-      if ( $line =~ /^(\s*)/ ) {
-        $leading = $1;
-      }
-
-      if ( length( $leading ) < length( $payload_target ) ) {
-        $line =~ s/^\s*/$payload_target/;
-      }
-    }
-
-    push @out, $line;
-
-    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
-      $level++;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _isolate_script_blocks ( $self, $text ) {
+sub _js_prebake_scripts ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   # Basic boundary cleanup before extraction.
@@ -463,7 +367,7 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
 
   return $original unless defined $formatted && length $formatted;
 
-  $formatted = $self->_js_repair_known_munges( $js, $formatted );
+  $formatted = $self->_js_postfix_munges( $js, $formatted );
 
   if ( $self->_js_formatter_munged( $js, $formatted, $matched ) ) {
     return $original;
@@ -599,7 +503,7 @@ sub _js_prebake ( $self, $js ) {
   return $js;
 }
 
-sub _js_repair_known_munges ( $self, $before, $after ) {
+sub _js_postfix_munges ( $self, $before, $after ) {
   return $after if !defined $before || !defined $after;
   return $after if $before eq $after;
 
@@ -635,17 +539,7 @@ sub _js_repair_known_munges ( $self, $before, $after ) {
   return $after;
 }
 
-sub _perltidy_ensure_tmp_dir ( $self ) {
-  require File::Path;
-
-  my $dir = $self->_perltidy_tmp_dir;
-
-  File::Path::make_path( $dir ) unless -d $dir;
-
-  return $dir;
-}
-
-sub perltidy_input_from_chunks ( $self, @chunks ) {
+sub _perltidy_prebake_region ( $self, @chunks ) {
   my @out;
 
   for my $i ( 0 .. $#chunks ) {
@@ -679,7 +573,7 @@ sub perltidy_input_from_chunks ( $self, @chunks ) {
   return join "\n", @out;
 }
 
-sub perltidy_reemit_regions ( $self, @chunks ) {
+sub _perltidy_reemit_regions ( $self, @chunks ) {
   my @out;
   my @current;
   my $depth     = 0;
@@ -728,9 +622,13 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
          && ( $next_ep // '' ) ne 'transition' )
     {
       $idx++;
-      my $perl = $self->perltidy_input_from_chunks( @current );
+      my $perl = $self->_perltidy_prebake_region( @current );
 
-      if ( !$self->_perltidy_region_supported( $perl ) ) {
+      if (    !defined $perl
+           || !length $perl
+           || $perl =~ /\@\{\s*(?:\n|\z)/
+           || $perl =~ /\bbegin\s*(?:\n|\z)/ )
+      {
         for my $chunk ( @current ) {
           my $line = $chunk->{text};
           push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
@@ -739,7 +637,7 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
 
         }
       } else {
-        my ( $ok, $tidied ) = $self->perltidy_run( $perl, $idx );
+        my ( $ok, $tidied ) = $self->_perltidy_run( $perl, $idx );
 
         if ( !$ok ) {
           for my $chunk ( @current ) {
@@ -750,7 +648,7 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
             push @out, '' if $line =~ m{</script>\s*$}i;
           }
         } else {
-          my $template = $self->perltidy_template_from_region( $tidied );
+          my $template = $self->_perltidy_template_from_region( $tidied );
           push @out, split /\n/, $template, -1;
         }
       }
@@ -769,9 +667,14 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
   if ( @current ) {
     $idx++;
 
-    my $perl = $self->perltidy_input_from_chunks( @current );
+    my $perl = $self->_perltidy_prebake_region( @current );
 
-    if ( !$self->_perltidy_region_supported( $perl ) ) {
+    if (    !defined $perl
+         || !length $perl
+         || $perl =~ /\@\{\s*(?:\n|\z)/
+         || $perl =~ /\bbegin\s*(?:\n|\z)/ )
+    {
+      #     if ( !$self->_perltidy_region_supported( $perl ) ) {
       for my $chunk ( @current ) {
         my $line = $chunk->{text};
         push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
@@ -779,7 +682,7 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
         push @out, '' if $line =~ m{</script>\s*$}i;
       }
     } else {
-      my ( $ok, $tidied ) = $self->perltidy_run( $perl, $idx );
+      my ( $ok, $tidied ) = $self->_perltidy_run( $perl, $idx );
 
       if ( !$ok ) {
         for my $chunk ( @current ) {
@@ -790,7 +693,7 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
               if $line =~ m{</script>\s*$}i;
         }
       } else {
-        my $template = $self->perltidy_template_from_region( $tidied );
+        my $template = $self->_perltidy_template_from_region( $tidied );
         push @out, split /\n/, $template, -1;
       }
     }
@@ -799,7 +702,7 @@ sub perltidy_reemit_regions ( $self, @chunks ) {
   return join "\n", @out;
 }
 
-sub perltidy_run ( $self, $perl, $idx = 1 ) {
+sub _perltidy_run ( $self, $perl, $idx = 1 ) {
 
   # try stdin/stdout first
   # if success, return tidied stdout
@@ -831,7 +734,7 @@ sub perltidy_run ( $self, $perl, $idx = 1 ) {
 
   if ( $@ ) {
     warn "Cannot run perltidy: $@";
-    $self->debug_perltidy_write_file( $idx, $perl );
+    $self->_debug_perltidy_write_file( $idx, $perl );
     return ( 0, $perl );
   }
 
@@ -878,7 +781,7 @@ sub perltidy_run ( $self, $perl, $idx = 1 ) {
   warn "perltidy failed with status $status; writing debug file\n";
   warn $errors if length $errors;
 
-  my $path = $self->debug_perltidy_write_file( $idx, $perl );
+  my $path = $self->_debug_perltidy_write_file( $idx, $perl );
 
   my @file_cmd = ( 'perltidy', '-b' );
 
@@ -904,7 +807,7 @@ sub perltidy_run ( $self, $perl, $idx = 1 ) {
 
 }
 
-sub perltidy_template_from_region ( $self, $text ) {
+sub _perltidy_template_from_region ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   my @out;
@@ -950,34 +853,86 @@ sub perltidy_template_from_region ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _perltidy_region_supported ( $self, $perl ) {
-  return 0 unless defined $perl && length $perl;
+sub _postfix_ep_block_indentation ( $self, $text ) {
+  return '' unless defined $text && length $text;
 
-  # Mojo/debug templates often contain multiline constructs like:
-  #   for my $line (@{
-  #     ...
-  #   }) {
-  return 0 if $perl =~ /\@\{\s*(?:\n|\z)/;
+  my @out;
+  my $level     = 0;
+  my $in_script = 0;
+  my $indent    = ' ' x $self->{indent_width};
 
-  # Also skip regions containing Mojo's "begin" helper style until we handle it
-  # deliberately.
-  return 0 if $perl =~ /\bbegin\s*(?:\n|\z)/;
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind = $self->_ep_control( $line );
 
-  return 1;
-}
+    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+      $level-- if $level > 0;
+    }
 
-sub _perltidy_tmp_dir ( $self ) {
-  require Cwd;
-  require File::Basename;
-  require File::Spec;
+    my $target         = $level > 0 ? $indent x $level         : '';
+    my $payload_target = $level > 0 ? $indent x ( $level + 1 ) : '';
 
-  my $module_dir = File::Basename::dirname( __FILE__ );
-  my $root = Cwd::abs_path( File::Spec->catdir( $module_dir, '..', '..' ) );
+    if ( $line =~ /^\s*<script\b/i ) {
+      if ( length $target ) {
+        $line =~ s/^\s*/$target/;
+      }
 
-  die "Cannot resolve project root from " . __FILE__ . "\n"
-      unless defined $root && length $root;
+      $in_script = 1;
+      push @out, $line;
+      next;
+    }
 
-  return File::Spec->catdir( $root, 'tmp', 'perltidy' );
+    if ( $in_script ) {
+      if ( $line =~ m{^\s*</script>}i ) {
+        if ( length $target ) {
+          $line =~ s/^\s*/$target/;
+        }
+
+        $in_script = 0;
+        push @out, $line;
+        next;
+      }
+
+      if ( length $line ) {
+        $line = $target . $indent . $line;
+      }
+
+      push @out, $line;
+      next;
+    }
+
+    # EP/code lines keep their own perltidy-derived indentation.
+    # Do not apply payload indentation to them.
+    if ( $line =~ /^\s*%/ ) {
+      push @out, $line;
+
+      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+        $level++;
+      }
+
+      next;
+    }
+
+    # Non-EP payload lines inside EP blocks get one extra visual indent.
+    if ( $level > 0 && length $line ) {
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $payload_target ) ) {
+        $line =~ s/^\s*/$payload_target/;
+      }
+    }
+
+    push @out, $line;
+
+    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+      $level++;
+    }
+  }
+
+  return join "\n", @out;
 }
 
 sub _reemit_begin_blocks ( $self, $text ) {
@@ -1017,16 +972,10 @@ sub _reemit_begin_blocks ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _separate_adjacent_ep_blocks ( $self, $text ) {
+sub _remove_extra_newlines ( $self, $text ) {
   return '' unless defined $text && length $text;
 
-  my $tag = qr/[A-Za-z][A-Za-z0-9:_-]*/;
-  my $ctl = qr/(?:if|unless|for|foreach|while)/;
-  $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
-  $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
-
-  #   $text =~ s{(%\s*\}\s*)\n(%\s*$ctl\b)}{$1\n\n$2}g;
-  #   $text =~ s{(%\s*\}\s*)\n(</$tag>)}{$1\n\n$2}g;
+  $text =~ s/\n{3,}/\n\n/g;
 
   return $text;
 }
@@ -1120,9 +1069,10 @@ sub _separate_brace_blocks ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _separate_initial_ep_statement_block ( $self, $text ) {
+sub _separate_ep_blocks ( $self, $text ) {
   return '' unless defined $text && length $text;
 
+  # separate initial ep statement block
   $text =~ s{
     \A
     (
@@ -1133,6 +1083,11 @@ sub _separate_initial_ep_statement_block ( $self, $text ) {
     (?=<[A-Za-z])
   }{$1\n}gx;
 
+  # separate adjacent ep blocks
+  my $tag = qr/[A-Za-z][A-Za-z0-9:_-]*/;
+  my $ctl = qr/(?:if|unless|for|foreach|while)/;
+  $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+  $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
   return $text;
 }
 
@@ -1140,49 +1095,113 @@ sub tidy ( $self, $input ) {
   my $text = defined $input ? $input : '';
   my $flat = $self->_flatten( $text );
 
-  #   $flat = $self->_js_format_text( $flat );
-
   my @chunks = $self->_chunks_from_flat( $flat );
-  my $out    = $self->perltidy_reemit_regions( @chunks );
-  $self->_debug_action_block_slice( 'FOOBY', $out );
+  my $out    = $self->_perltidy_reemit_regions( @chunks );
 
   $out = $self->_html_separate_blocks( $out );
   $out = $self->_html_separate_landmarks( $out );
 
-  $out = $self->_indent_output_lines_in_ep_blocks( $out );
+  $out = $self->_postfix_ep_block_indentation( $out );
   $out = $self->_reemit_begin_blocks( $out );
 
   $out = $self->_separate_begin_blocks( $out );
   $out = $self->_separate_brace_blocks( $out );
-  $out = $self->_separate_initial_ep_statement_block( $out );
-  $out = $self->_separate_adjacent_ep_blocks( $out );
 
-  $out = $self->_compact_blank_runs( $out );
+  $out = $self->_separate_ep_blocks( $out );
+  $out = $self->_remove_extra_newlines( $out );
 
   return $out;
 }
 
 1;
 
-sub _debug_action_block_slice ( $self, $label, $text ) {
-  return unless defined $text;
-
-  if ( $text =~ /(% for my \$t .*?% \} else \{.*?<em>dev<\/em>.*?% \})/s ) {
-    my $slice = $1;
-    $slice =~ s/ /·/g;
-    $slice =~ s/\n/⏎\n/g;
-
-    warn
-"\n--- $label action-block ---\n$slice\n--- end $label action-block ---\n";
-  }
-
-  return;
-}
-
 ##########################################################################
-#                 These are not in use
 ##########################################################################
+
+# sub _ep_logical_perl_code ( $self, $code ) {
+#   return '' unless defined $code && length $code;
 #
+#   # Flattened native multiline EP continuation inside @{ ... }:
+#   #   @{% $foo% }) {
+#   # should be understood, for Perl scanning only, as:
+#   #   @{$foo}) {
+#   #
+#   # Normal one-line Perl like @{$foo} does not match this and is left alone.
+#   $code =~ s!\@\{\s*%\s*!\@\{!g;
+#   $code =~ s{\s*%\s*(?=\}\)\s*\{)}{}g;
+#
+#   return $code;
+# }
+
+# sub _separate_adjacent_ep_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my $tag = qr/[A-Za-z][A-Za-z0-9:_-]*/;
+#   my $ctl = qr/(?:if|unless|for|foreach|while)/;
+#   $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+#   $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+#
+#   #   $text =~ s{(%\s*\}\s*)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+#   #   $text =~ s{(%\s*\}\s*)\n(</$tag>)}{$1\n\n$2}g;
+#
+#   return $text;
+# }
+
+# sub _perltidy_ensure_tmp_dir ( $self ) {
+#   require File::Path;
+#
+#   my $dir = $self->_perltidy_tmp_dir;
+#
+#   File::Path::make_path( $dir ) unless -d $dir;
+#
+#   return $dir;
+# }
+
+# sub _perltidy_tmp_dir ( $self ) {
+#   require Cwd;
+#   require File::Basename;
+#   require File::Spec;
+#
+#   my $module_dir = File::Basename::dirname( __FILE__ );
+#   my $root = Cwd::abs_path( File::Spec->catdir( $module_dir, '..', '..' ) );
+#
+#   die "Cannot resolve project root from " . __FILE__ . "\n"
+#       unless defined $root && length $root;
+#
+#   return File::Spec->catdir( $root, 'tmp', 'perltidy' );
+# }
+
+# sub _perltidy_region_supported ( $self, $perl ) {
+#   return 0 unless defined $perl && length $perl;
+#
+#   # Mojo/debug templates often contain multiline constructs like:
+#   #   for my $line (@{
+#   #     ...
+#   #   }) {
+#   return 0 if $perl =~ /\@\{\s*(?:\n|\z)/;
+#
+#   # Also skip regions containing Mojo's "begin" helper style until we handle it
+#   # deliberately.
+#   return 0 if $perl =~ /\bbegin\s*(?:\n|\z)/;
+#
+#   return 1;
+# }
+#
+# sub _debug_action_block_slice ( $self, $label, $text ) {
+#   return unless defined $text;
+#
+#   if ( $text =~ /(% for my \$t .*?% \} else \{.*?<em>dev<\/em>.*?% \})/s ) {
+#     my $slice = $1;
+#     $slice =~ s/ /·/g;
+#     $slice =~ s/\n/⏎\n/g;
+#
+#     warn
+# "\n--- $label action-block ---\n$slice\n--- end $label action-block ---\n";
+#   }
+#
+#   return;
+# }
+
 # sub _perltidy_compact_region ( $self, $text ) {
 #   return '' unless defined $text && length $text;
 #
