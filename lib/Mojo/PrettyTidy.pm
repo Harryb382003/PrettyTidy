@@ -17,7 +17,8 @@ sub new ( $class, %args ) {
           indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
           tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
           columns      => defined $args{columns}      ? $args{columns}      : 0,
-          attributes   => defined $args{attributes}   ? $args{attributes}   : 0,
+          attributes   => defined $args{attributes}   ? $args{attributes}   : 1,
+          javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
           maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
           sourceview   => defined $args{sourceview}   ? $args{sourceview}   : 0,
   }, $class;
@@ -25,10 +26,10 @@ sub new ( $class, %args ) {
   return $self;
 }
 
-sub _chunks_from_flat ( $self, $text ) {
+sub _chunk ( $self, $text ) {
   my @chunks;
 
-  $text = $self->_early_breakpoints( $text );
+  $text = $self->_ep_early_breakpoints( $text );
 
   for my $line ( split /\n/, $text, -1 ) {
     if ( $line =~ /^\s*$/ ) {
@@ -54,33 +55,7 @@ sub _chunks_from_flat ( $self, $text ) {
   return @chunks;
 }
 
-sub _debug_perltidy_cleanup_file ( $self, $name ) {
-  return unless defined $name && length $name;
-
-  my $path = File::Spec->catfile( 'tmp', 'perltidy', $name );
-
-  if ( -e $path ) {
-    unlink $path or warn "Could not remove $path: $!";
-  }
-
-  return;
-}
-
-sub _debug_perltidy_write_file ( $self, $idx, $perl ) {
-  my $dir = File::Spec->catdir( 'tmp', 'perltidy' );
-
-  if ( !-d $dir ) { File::Path::make_path( $dir ); }
-
-  my $path = File::Spec->catfile( $dir, sprintf 'pt-region-%03d.pl', $idx );
-
-  open my $fh, '>', $path or die "Cannot write $path: $!";
-  print {$fh} $perl;
-  close $fh or die "Cannot close $path: $!";
-
-  return $path;
-}
-
-sub _early_breakpoints ( $self, $text ) {
+sub _ep_early_breakpoints ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   # HTML comments are their own visible units. Multi-line comment bodies are
@@ -195,6 +170,138 @@ sub _ep_control ( $self, $line ) {
   #   % for my $line (@{
   #   % }) {
   return 'statement';
+}
+
+sub _ep_postfix_indentation ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  # EP control-block payload indentation.
+  #
+  # Handles:
+  #   % if (...) {
+  #       <payload>
+  #   % }
+  #
+  # Non-% payload lines inside EP control blocks get one extra visual indent.
+  # % lines keep their perltidy-derived indentation.
+  my @out;
+  my $level     = 0;
+  my $in_script = 0;
+  my $indent    = ' ' x $self->{indent_width};
+
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind = $self->_ep_control( $line );
+
+    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+      $level-- if $level > 0;
+    }
+
+    my $target         = $level > 0 ? $indent x $level         : '';
+    my $payload_target = $level > 0 ? $indent x ( $level + 1 ) : '';
+
+    if ( $line =~ /^\s*<script\b/i ) {
+      if ( length $target ) {
+        $line =~ s/^\s*/$target/;
+      }
+
+      $in_script = 1;
+      push @out, $line;
+      next;
+    }
+
+    if ( $in_script ) {
+      if ( $line =~ m{^\s*</script>}i ) {
+        if ( length $target ) {
+          $line =~ s/^\s*/$target/;
+        }
+
+        $in_script = 0;
+        push @out, $line;
+        next;
+      }
+
+      if ( length $line ) {
+        $line = $target . $indent . $line;
+      }
+
+      push @out, $line;
+      next;
+    }
+
+    # EP/code lines keep their own perltidy-derived indentation.
+    # Do not apply payload indentation to them.
+    if ( $line =~ /^\s*%/ ) {
+      push @out, $line;
+
+      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+        $level++;
+      }
+
+      next;
+    }
+
+    # Non-EP payload lines inside EP blocks get one extra visual indent.
+    if ( $level > 0 && length $line ) {
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $payload_target ) ) {
+        $line =~ s/^\s*/$payload_target/;
+      }
+    }
+
+    push @out, $line;
+
+    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+      $level++;
+    }
+  }
+
+  $text = join "\n", @out;
+
+  # Mojo begin/end helper indentation.
+  #
+  # Handles:
+  #   % my $cb = begin
+  #       <payload>
+  #   % end
+  #
+  # existing _reemit_begin_blocks body here
+  my @out;
+  my $level  = 0;
+  my $indent = ' ' x $self->{indent_width};
+
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind = $self->_ep_control( $line );
+
+    if ( defined $kind && $kind eq 'end' ) {
+      $level-- if $level > 0;
+    }
+
+    if ( $level > 0 && length $line ) {
+      my $target  = $indent x $level;
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $target ) ) {
+        $line =~ s/^\s*/$target/;
+      }
+    }
+
+    push @out, $line;
+
+    if ( defined $kind && $kind eq 'begin' ) {
+      $level++;
+    }
+  }
+
+  return join "\n", @out;
 }
 
 sub ep_source_file ( $self, $file ) {
@@ -539,7 +646,33 @@ sub _js_postfix_munges ( $self, $before, $after ) {
   return $after;
 }
 
-sub _perltidy_prebake_region ( $self, @chunks ) {
+sub _pt_debug_cleanup_file ( $self, $name ) {
+  return unless defined $name && length $name;
+
+  my $path = File::Spec->catfile( 'tmp', 'perltidy', $name );
+
+  if ( -e $path ) {
+    unlink $path or warn "Could not remove $path: $!";
+  }
+
+  return;
+}
+
+sub _pt_debug_write_file ( $self, $idx, $perl ) {
+  my $dir = File::Spec->catdir( 'tmp', 'perltidy' );
+
+  if ( !-d $dir ) { File::Path::make_path( $dir ); }
+
+  my $path = File::Spec->catfile( $dir, sprintf 'pt-region-%03d.pl', $idx );
+
+  open my $fh, '>', $path or die "Cannot write $path: $!";
+  print {$fh} $perl;
+  close $fh or die "Cannot close $path: $!";
+
+  return $path;
+}
+
+sub _pt_prebake_region ( $self, @chunks ) {
   my @out;
 
   for my $i ( 0 .. $#chunks ) {
@@ -573,7 +706,7 @@ sub _perltidy_prebake_region ( $self, @chunks ) {
   return join "\n", @out;
 }
 
-sub _perltidy_reemit_regions ( $self, @chunks ) {
+sub _pt_reemit_regions ( $self, @chunks ) {
   my @out;
   my @current;
   my $depth     = 0;
@@ -622,7 +755,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
          && ( $next_ep // '' ) ne 'transition' )
     {
       $idx++;
-      my $perl = $self->_perltidy_prebake_region( @current );
+      my $perl = $self->_pt_prebake_region( @current );
 
       if (    !defined $perl
            || !length $perl
@@ -637,7 +770,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
 
         }
       } else {
-        my ( $ok, $tidied ) = $self->_perltidy_run( $perl, $idx );
+        my ( $ok, $tidied ) = $self->_pt_run( $perl, $idx );
 
         if ( !$ok ) {
           for my $chunk ( @current ) {
@@ -648,7 +781,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
             push @out, '' if $line =~ m{</script>\s*$}i;
           }
         } else {
-          my $template = $self->_perltidy_template_from_region( $tidied );
+          my $template = $self->_pt_template_from_region( $tidied );
           push @out, split /\n/, $template, -1;
         }
       }
@@ -667,14 +800,14 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
   if ( @current ) {
     $idx++;
 
-    my $perl = $self->_perltidy_prebake_region( @current );
+    my $perl = $self->_pt_prebake_region( @current );
 
     if (    !defined $perl
          || !length $perl
          || $perl =~ /\@\{\s*(?:\n|\z)/
          || $perl =~ /\bbegin\s*(?:\n|\z)/ )
     {
-      #     if ( !$self->_perltidy_region_supported( $perl ) ) {
+      #     if ( !$self->_pt_region_supported( $perl ) ) {
       for my $chunk ( @current ) {
         my $line = $chunk->{text};
         push @out, '' if $line =~ /^\s*<script\b/i && @out && $out[-1] ne '';
@@ -682,7 +815,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
         push @out, '' if $line =~ m{</script>\s*$}i;
       }
     } else {
-      my ( $ok, $tidied ) = $self->_perltidy_run( $perl, $idx );
+      my ( $ok, $tidied ) = $self->_pt_run( $perl, $idx );
 
       if ( !$ok ) {
         for my $chunk ( @current ) {
@@ -693,7 +826,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
               if $line =~ m{</script>\s*$}i;
         }
       } else {
-        my $template = $self->_perltidy_template_from_region( $tidied );
+        my $template = $self->_pt_template_from_region( $tidied );
         push @out, split /\n/, $template, -1;
       }
     }
@@ -702,7 +835,7 @@ sub _perltidy_reemit_regions ( $self, @chunks ) {
   return join "\n", @out;
 }
 
-sub _perltidy_run ( $self, $perl, $idx = 1 ) {
+sub _pt_run ( $self, $perl, $idx = 1 ) {
 
   # try stdin/stdout first
   # if success, return tidied stdout
@@ -734,7 +867,7 @@ sub _perltidy_run ( $self, $perl, $idx = 1 ) {
 
   if ( $@ ) {
     warn "Cannot run perltidy: $@";
-    $self->_debug_perltidy_write_file( $idx, $perl );
+    $self->_pt_debug_write_file( $idx, $perl );
     return ( 0, $perl );
   }
 
@@ -781,7 +914,7 @@ sub _perltidy_run ( $self, $perl, $idx = 1 ) {
   warn "perltidy failed with status $status; writing debug file\n";
   warn $errors if length $errors;
 
-  my $path = $self->_debug_perltidy_write_file( $idx, $perl );
+  my $path = $self->_pt_debug_write_file( $idx, $perl );
 
   my @file_cmd = ( 'perltidy', '-b' );
 
@@ -807,7 +940,7 @@ sub _perltidy_run ( $self, $perl, $idx = 1 ) {
 
 }
 
-sub _perltidy_template_from_region ( $self, $text ) {
+sub _pt_template_from_region ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   my @out;
@@ -853,125 +986,6 @@ sub _perltidy_template_from_region ( $self, $text ) {
   return join "\n", @out;
 }
 
-sub _postfix_ep_block_indentation ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  my @out;
-  my $level     = 0;
-  my $in_script = 0;
-  my $indent    = ' ' x $self->{indent_width};
-
-  for my $line ( split /\n/, $text, -1 ) {
-    my $kind = $self->_ep_control( $line );
-
-    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
-      $level-- if $level > 0;
-    }
-
-    my $target         = $level > 0 ? $indent x $level         : '';
-    my $payload_target = $level > 0 ? $indent x ( $level + 1 ) : '';
-
-    if ( $line =~ /^\s*<script\b/i ) {
-      if ( length $target ) {
-        $line =~ s/^\s*/$target/;
-      }
-
-      $in_script = 1;
-      push @out, $line;
-      next;
-    }
-
-    if ( $in_script ) {
-      if ( $line =~ m{^\s*</script>}i ) {
-        if ( length $target ) {
-          $line =~ s/^\s*/$target/;
-        }
-
-        $in_script = 0;
-        push @out, $line;
-        next;
-      }
-
-      if ( length $line ) {
-        $line = $target . $indent . $line;
-      }
-
-      push @out, $line;
-      next;
-    }
-
-    # EP/code lines keep their own perltidy-derived indentation.
-    # Do not apply payload indentation to them.
-    if ( $line =~ /^\s*%/ ) {
-      push @out, $line;
-
-      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
-        $level++;
-      }
-
-      next;
-    }
-
-    # Non-EP payload lines inside EP blocks get one extra visual indent.
-    if ( $level > 0 && length $line ) {
-      my $leading = '';
-
-      if ( $line =~ /^(\s*)/ ) {
-        $leading = $1;
-      }
-
-      if ( length( $leading ) < length( $payload_target ) ) {
-        $line =~ s/^\s*/$payload_target/;
-      }
-    }
-
-    push @out, $line;
-
-    if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
-      $level++;
-    }
-  }
-
-  return join "\n", @out;
-}
-
-sub _reemit_begin_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  my @out;
-  my $level  = 0;
-  my $indent = ' ' x $self->{indent_width};
-
-  for my $line ( split /\n/, $text, -1 ) {
-    my $kind = $self->_ep_control( $line );
-
-    if ( defined $kind && $kind eq 'end' ) {
-      $level-- if $level > 0;
-    }
-
-    if ( $level > 0 && length $line ) {
-      my $target  = $indent x $level;
-      my $leading = '';
-
-      if ( $line =~ /^(\s*)/ ) {
-        $leading = $1;
-      }
-
-      if ( length( $leading ) < length( $target ) ) {
-        $line =~ s/^\s*/$target/;
-      }
-    }
-
-    push @out, $line;
-
-    if ( defined $kind && $kind eq 'begin' ) {
-      $level++;
-    }
-  }
-
-  return join "\n", @out;
-}
-
 sub _remove_extra_newlines ( $self, $text ) {
   return '' unless defined $text && length $text;
 
@@ -980,9 +994,17 @@ sub _remove_extra_newlines ( $self, $text ) {
   return $text;
 }
 
-sub _separate_begin_blocks ( $self, $text ) {
+sub _separate_blocks ( $self, $text ) {
   return '' unless defined $text && length $text;
 
+  # Mojo begin/end helper blocks.
+  #
+  # Handles:
+  #   % my $cb = begin
+  #     ...
+  #   % end
+  #
+  # Keep begin/end helper regions visually separated from nearby payload.
   my @in = split /\n/, $text, -1;
   my @out;
   my $level = 0;
@@ -1016,11 +1038,16 @@ sub _separate_begin_blocks ( $self, $text ) {
     }
   }
 
-  return join "\n", @out;
-}
-
-sub _separate_brace_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
+# EP brace/control blocks.
+#
+# Handles:
+#   % if (...) {
+#     ...
+#   % } else {
+#     ...
+#   % }
+#
+# Keep control blocks readable while avoiding a blank line before else/elsif/etc.
 
   my @in = split /\n/, $text, -1;
   my @out;
@@ -1066,13 +1093,10 @@ sub _separate_brace_blocks ( $self, $text ) {
     }
   }
 
-  return join "\n", @out;
-}
-
-sub _separate_ep_blocks ( $self, $text ) {
-  return '' unless defined $text && length $text;
-
-  # separate initial ep statement block
+  # Adjacent EP blocks / EP-to-payload boundaries.
+  #
+  # Handles EP statements or control lines that are glued to nearby
+  # HTML/template payload.
   $text =~ s{
     \A
     (
@@ -1089,25 +1113,22 @@ sub _separate_ep_blocks ( $self, $text ) {
   $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
   $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
   return $text;
+
 }
 
 sub tidy ( $self, $input ) {
   my $text = defined $input ? $input : '';
   my $flat = $self->_flatten( $text );
 
-  my @chunks = $self->_chunks_from_flat( $flat );
-  my $out    = $self->_perltidy_reemit_regions( @chunks );
+  my @chunks = $self->_chunk( $flat );
+  my $out    = $self->_pt_reemit_regions( @chunks );
 
   $out = $self->_html_separate_blocks( $out );
   $out = $self->_html_separate_landmarks( $out );
 
-  $out = $self->_postfix_ep_block_indentation( $out );
-  $out = $self->_reemit_begin_blocks( $out );
+  $out = $self->_ep_postfix_indentation( $out );
 
-  $out = $self->_separate_begin_blocks( $out );
-  $out = $self->_separate_brace_blocks( $out );
-
-  $out = $self->_separate_ep_blocks( $out );
+  $out = $self->_separate_blocks( $out );
   $out = $self->_remove_extra_newlines( $out );
 
   return $out;
@@ -1117,6 +1138,157 @@ sub tidy ( $self, $input ) {
 
 ##########################################################################
 ##########################################################################
+
+# sub _reemit_begin_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @out;
+#   my $level  = 0;
+#   my $indent = ' ' x $self->{indent_width};
+#
+#   for my $line ( split /\n/, $text, -1 ) {
+#     my $kind = $self->_ep_control( $line );
+#
+#     if ( defined $kind && $kind eq 'end' ) {
+#       $level-- if $level > 0;
+#     }
+#
+#     if ( $level > 0 && length $line ) {
+#       my $target  = $indent x $level;
+#       my $leading = '';
+#
+#       if ( $line =~ /^(\s*)/ ) {
+#         $leading = $1;
+#       }
+#
+#       if ( length( $leading ) < length( $target ) ) {
+#         $line =~ s/^\s*/$target/;
+#       }
+#     }
+#
+#     push @out, $line;
+#
+#     if ( defined $kind && $kind eq 'begin' ) {
+#       $level++;
+#     }
+#   }
+#
+#   return join "\n", @out;
+# }
+
+#
+# sub _separate_blocks
+#
+#     sub _separate_begin_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @in = split /\n/, $text, -1;
+#   my @out;
+#   my $level = 0;
+#
+#   for my $i ( 0 .. $#in ) {
+#     my $line = $in[$i];
+#     my $kind = $self->_ep_control( $line );
+#
+#     if ( defined $kind && $kind eq 'end' ) {
+#       $level-- if $level > 0;
+#     }
+#
+#     if (    defined $kind
+#          && $kind eq 'begin'
+#          && $level == 0
+#          && @out
+#          && $out[-1] ne '' )
+#     {
+#       push @out, '';
+#     }
+#
+#     push @out, $line;
+#
+#     if ( defined $kind && $kind eq 'end' && $level == 0 ) {
+#       my $next = $in[ $i + 1 ] // '';
+#       push @out, '' if $next =~ /\S/ && @out && $out[-1] ne '';
+#     }
+#
+#     if ( defined $kind && $kind eq 'begin' ) {
+#       $level++;
+#     }
+#   }
+#
+#   return join "\n", @out;
+# }
+
+# sub _separate_brace_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @in = split /\n/, $text, -1;
+#   my @out;
+#   my $depth = 0;
+#
+#   for my $i ( 0 .. $#in ) {
+#     my $line = $in[$i];
+#     my $kind = $self->_ep_control( $line );
+#
+#     my $leading = 0;
+#     $leading = length( $1 ) if $line =~ /\A(\s*)/;
+#
+#     if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+#       $depth-- if $depth > 0;
+#     }
+#
+#     if (    defined $kind
+#          && $kind eq 'opener'
+#          && $depth == 0
+#          && $leading == 0
+#          && @out
+#          && $out[-1] ne '' )
+#     {
+#       push @out, '';
+#     }
+#
+#     push @out, $line;
+#
+#     if (    defined $kind
+#          && $kind eq 'closer'
+#          && $depth == 0
+#          && $leading == 0 )
+#     {
+#       my $next = $in[ $i + 1 ] // '';
+#
+#       if ( $next =~ /\S/ && $next !~ /^\s*%\s*(?:\}\s*)?(?:else|elsif)\b/ ) {
+#         push @out, '' unless @out && $out[-1] eq '';
+#       }
+#     }
+#
+#     if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+#       $depth++;
+#     }
+#   }
+#
+#   return join "\n", @out;
+# }
+
+# sub _separate_ep_blocks ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   # separate initial ep statement block
+#   $text =~ s{
+#     \A
+#     (
+#       (?:
+#         %\s*(?:layout|title|my|our|state)\b[^\n]*;\n
+#       )+
+#     )
+#     (?=<[A-Za-z])
+#   }{$1\n}gx;
+#
+#   # separate adjacent ep blocks
+#   my $tag = qr/[A-Za-z][A-Za-z0-9:_-]*/;
+#   my $ctl = qr/(?:if|unless|for|foreach|while)/;
+#   $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+#   $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+#   return $text;
+# }
 
 # sub _ep_logical_perl_code ( $self, $code ) {
 #   return '' unless defined $code && length $code;
@@ -1147,17 +1319,17 @@ sub tidy ( $self, $input ) {
 #   return $text;
 # }
 
-# sub _perltidy_ensure_tmp_dir ( $self ) {
+# sub _pt_ensure_tmp_dir ( $self ) {
 #   require File::Path;
 #
-#   my $dir = $self->_perltidy_tmp_dir;
+#   my $dir = $self->_pt_tmp_dir;
 #
 #   File::Path::make_path( $dir ) unless -d $dir;
 #
 #   return $dir;
 # }
 
-# sub _perltidy_tmp_dir ( $self ) {
+# sub _pt_tmp_dir ( $self ) {
 #   require Cwd;
 #   require File::Basename;
 #   require File::Spec;
@@ -1171,7 +1343,7 @@ sub tidy ( $self, $input ) {
 #   return File::Spec->catdir( $root, 'tmp', 'perltidy' );
 # }
 
-# sub _perltidy_region_supported ( $self, $perl ) {
+# sub _pt_region_supported ( $self, $perl ) {
 #   return 0 unless defined $perl && length $perl;
 #
 #   # Mojo/debug templates often contain multiline constructs like:
@@ -1202,7 +1374,7 @@ sub tidy ( $self, $input ) {
 #   return;
 # }
 
-# sub _perltidy_compact_region ( $self, $text ) {
+# sub _pt_compact_region ( $self, $text ) {
 #   return '' unless defined $text && length $text;
 #
 #   my @out = grep {/\S/} split /\n/, $text, -1;

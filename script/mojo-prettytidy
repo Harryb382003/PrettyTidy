@@ -161,22 +161,12 @@ pod2usage( "--maxchars requires --source-view\n" )
     if $maxchars && !$sourceview;
 
 my $pt = Mojo::PrettyTidy->new(
-
-#                                 (
-#                                   $indent_width
-#                                   ? ( indent_width => $indent_width )
-#                                   : ()
-#                                 ),
-#                                 (
-#                                   $tab_width ? ( tab_width => $tab_width ) : ()
-#                                 ),
-
-  attributes => $attributes,
-  javascript => $javascript,
-  ( $columns    ? ( columns    => $columns )  : () ),
-  ( $attributes ? ( attributes => 1 )         : () ),
-  ( $maxchars   ? ( maxchars   => $maxchars ) : () ),
-  ( $sourceview ? ( sourceview => 1 )         : () ), );
+                                attributes => $attributes ? 1 : 0,
+                                javascript => $javascript ? 1 : 0,
+                                ( $columns  ? ( columns  => $columns )  : () ),
+                                ( $maxchars ? ( maxchars => $maxchars ) : () ),
+                                ( $sourceview ? ( sourceview => 1 )     : () ),
+);
 
 if ( $stdin ) {
   my $input = do { local $/; <STDIN> };
