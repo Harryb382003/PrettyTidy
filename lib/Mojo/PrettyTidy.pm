@@ -64,11 +64,48 @@ sub _ep_early_breakpoints ( $self, $text ) {
   $text =~ s{(-->)\n*}{$1\n}g;
 
   # Split common block-ish tags that flattening glued together.
-  $text =~ s{>[
-\t]*(?=<(?:html|head|body|title|meta|link|script|style|div|form|label|input|option|
-button|table|thead|tbody|tr|td|th|ul|ol|li|section|article)\b)}{>\n}gi;
-  $text =~ s{(>)[\t]*(?=%\s*
-(?:if|elsif|else|unless|for|foreach|while|my|our|state|return|end)\b)}{$1\n}g;
+  my @document_tags = qw(html head body title meta link);
+  my @script_tags   = qw(script style);
+  my @form_tags     = qw(form label input select option button);
+  my @table_tags    = qw(table thead tbody tr td th);
+  my @list_tags     = qw(ul ol li);
+  my @layout_tags   = qw(div pre section article);
+
+  my $break_tag = join '|',
+      @document_tags,
+      @script_tags,
+      @form_tags,
+      @table_tags,
+      @list_tags,
+      @layout_tags;
+
+  # Table cells containing code payload read better as a small block.
+  $text =~
+s{(<td\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</td>)}{$1\n$2\n$3}gis;
+  $text =~
+s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}{$1\n$2\n$3}gis;
+
+  # Input after label text, e.g. <label>Search:<input ...>
+  $text =~ s{(<label\b[^>]*>[^<\n]*?)(?=<input\b)}{$1\n}gi;
+
+  # Labels with inline text followed by a form control later on the same line
+  $text =~
+      s{(<label\b[^>]*>)[ \t]*([^<\n]+)(?=<(?:input|select|textarea|button)\b)}
+{$1\n$2\n}gi;
+
+  # Input after another input/tag boundary is already handled elsewhere.
+  $text =~ s{(?<!-)>[ \t]*(?=<input\b)}{>\n}gi;
+
+  # Selects are often glued to label text, e.g. <label>Mode:<select ...>.
+  $text =~ s{(<label\b[^>]*>[^<\n]*?)(?=<select\b)}{$1\n}gi;
+
+  # Do not split Perl method arrows like app->log->format.
+  $text =~ s{(?<!-)>[ \t]*(?=<(?:$break_tag)\b)}{>\n}gi;
+  my @perly_words =
+      qw(if elsif else unless for foreach while my our state return end given when);
+  my $perly = join '|', @perly_words;
+
+  $text =~ s{(?<!-)>[ \t]*(?=%\s*(?:$perly)\b)}{>\n}g;
   $text =~ s{(</script>)[ \t]*(?=<)}{$1\n}gi;
   $text =~ s{(</style>)[ \t]*(?=<)}{$1\n}gi;
 
@@ -77,6 +114,10 @@ button|table|thead|tbody|tr|td|th|ul|ol|li|section|article)\b)}{>\n}gi;
 
   # Keep a closing table cell with the preceding inline close for now.
   $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)\n(</td>)}{$1$2}g;
+
+  # If a table cell contains code payload, put the cell closer on its own line.
+  $text =~ s{(</code>)[ \t]*(</td>)}{$1\n$2}gi;
+  $text =~ s{(</code>)[ \t]*(</th>)}{$1\n$2}gi;
 
   # EP statement immediately followed by another EP line.
   $text =~ s/\;%/;\n%/g;
@@ -324,11 +365,342 @@ sub _flatten ( $self, $text ) {
   return join '', grep {length} @lines;
 }
 
+sub _html_attrib_paired ( $self, $text ) {
+  return '' unless defined $text && length $text;
+  my $indent         = ' ' x $self->{indent_width};
+  my $attr_indent    = $indent x 2;
+  my $body_indent    = $indent;
+  my $button_matches = 0;
+
+  my @tags = qw( button );
+  my $tag  = join '|', @tags;
+
+  $text =~ s{
+    ^([ \t]*)
+    (<$tag\b)
+    ((?:"[^"]*"|'[^']*'|[^'">])*)
+    >
+    ([\s\S]*?)
+    </$tag>
+  }{
+    do {
+      $button_matches++;
+
+      my ( $leading, $open, $attrs, $body ) = ( $1, $2, $3, $4 );
+
+      if ( $body =~ /</ ) {
+        "$leading$open$attrs>$body</$tag>";
+      }
+      else {
+        $attrs =~ s/\s+/ /g;
+        $attrs =~ s/^\s+//;
+        $attrs =~ s/\s+\z//;
+
+        $body =~ s/^\s+//;
+        $body =~ s/\s+\z//;
+
+        if ( $attrs !~ /\S/ ) {
+          "$leading$open>$body</$tag>";
+        }
+        else {
+          my @attrs = $attrs =~
+/([^\s=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)/g;
+
+          if ( @attrs <= 1 && $body !~ /\S/ ) {
+            "$leading$open $attrs>$body</$tag>";
+          }
+          else {
+            my $first = shift @attrs;
+            $first =~ s/^\s+//;
+            $first =~ s/\s+\z//;
+
+            my $out = "$leading$open $first";
+
+            for my $attr ( @attrs ) {
+              $attr =~ s/^\s+//;
+              $attr =~ s/\s+\z//;
+
+              $out .= "\n$leading$attr_indent$attr";
+            }
+
+            $out .= ">";
+
+            if ( length $body ) {
+              $out .= "\n$leading$body_indent$body";
+            }
+
+            $out .= "\n$leading</$tag>";
+            $out;
+          }
+        }
+      }
+    }
+  }gexim;
+
+  return $text;
+}
+
+sub _html_attrib_container ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @tags   = qw( form );
+  my $tag    = join '|', @tags;
+  my $indent = ' ' x $self->{indent_width};
+
+  $text =~ s{
+    ^([ \t]*)
+    (<$tag\b)
+    ((?:"[^"]*"|'[^']*'|[^'">\n])*)
+    (>)
+  }{
+    do {
+      my ( $leading, $open, $attrs, $close ) = ( $1, $2, $3, $4 );
+
+      if ( $attrs !~ /\S/ ) {
+        "$leading$open$attrs$close";
+      }
+      else {
+        my @attrs = $attrs =~ /([^\s=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)/g;
+
+        if ( @attrs <= 1 ) {
+          "$leading$open$attrs$close";
+        }
+        else {
+          my $first = shift @attrs;
+          $first =~ s/^\s+//;
+          $first =~ s/\s+\z//;
+
+          my $cont_indent = $leading . ( $indent x 2 );
+          my $out = "$leading$open $first";
+
+          for my $i ( 0 .. $#attrs ) {
+            my $attr = $attrs[$i];
+
+            $attr =~ s/^\s+//;
+            $attr =~ s/\s+\z//;
+
+            if ( $i == $#attrs ) {
+              $out .= "\n$cont_indent$attr$close";
+            }
+            else {
+              $out .= "\n$cont_indent$attr";
+            }
+          }
+
+          $out;
+        }
+      }
+    }
+  }gexim;
+
+  return $text;
+}
+
+sub _html_attrib_solo ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my $indent = ' ' x $self->{indent_width};
+  my @tags   = qw( input );
+  my $tag    = join '|', @tags;
+
+  $text =~ s{
+    ^([ \t]*)
+    (<$tag\b)
+    ((?:"[^"]*"|'[^']*'|[^'">\n])*)
+    (>)
+  }{
+    do {
+      my ( $leading, $open, $attrs, $close ) = ( $1, $2, $3, $4 );
+
+      if ( $attrs !~ /\S/ ) {
+        "$leading$open$attrs$close";
+      }
+      else {
+        my @attrs = $attrs =~ /([^\s=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)/g;
+
+        if ( @attrs <= 1 ) {
+          "$leading$open$attrs$close";
+        }
+        else {
+          my $first = shift @attrs;
+          $first =~ s/^\s+//;
+          $first =~ s/\s+\z//;
+
+          my $cont_indent = $leading . ( $indent x 2 );
+          my $out = "$leading$open $first";
+
+          for my $i ( 0 .. $#attrs ) {
+            my $attr = $attrs[$i];
+
+            $attr =~ s/^\s+//;
+            $attr =~ s/\s+\z//;
+
+            if ( $i == $#attrs ) {
+              $out .= "\n$cont_indent$attr$close";
+            }
+            else {
+              $out .= "\n$cont_indent$attr";
+            }
+          }
+
+          $out;
+        }
+      }
+    }
+  }gexim;
+
+  # If a multiline solo tag is glued to a closing container tag, split it.
+  $text =~
+s{^([ \t]*)([^<\n]*>)[\t]*(</(?:label|form|div|td|th|li)>)}{$1$2\n$1$3}gmi;
+  return $text;
+}
+
+sub _html_baseline_indentation ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my @out;
+  my $html_level       = 0;
+  my $ep_level         = 0;
+  my $ep_html_level    = 0;
+  my $in_codeish       = 0;
+  my $codeish_close_re = undef;
+  my $codeish_target   = '';
+  my $indent           = ' ' x $self->{indent_width};
+
+  my $block = qr{
+    (?:
+      form|label|select|option|button|input
+      |div|code
+      |table|thead|tbody|tfoot|tr|td|th|p
+      |ul|ol|li
+      |section|article
+    )
+  }x;
+
+  my $void = qr{(?:input|meta|link|img|br|hr|code)};
+
+  for my $line ( split /\n/, $text, -1 ) {
+    my $kind = $self->_ep_control( $line );
+
+    if ( defined $kind && ( $kind eq 'closer' || $kind eq 'transition' ) ) {
+      $ep_level-- if $ep_level > 0;
+
+      if ( $ep_level == 0 ) {
+        $ep_html_level = 0;
+      }
+    }
+
+    if ( $line =~ /^\s*%/ ) {
+      push @out, $line;
+
+      if ( defined $kind && ( $kind eq 'opener' || $kind eq 'transition' ) ) {
+        $ep_level++;
+      }
+
+      next;
+    }
+
+    my $in_ep_payload = $ep_level > 0 ? 1 : 0;
+
+    if ( $in_codeish ) {
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $codeish_target ) ) {
+        $line =~ s/^\s*/$codeish_target/;
+      }
+
+      push @out, $line;
+
+      if ( defined $codeish_close_re && $line =~ $codeish_close_re ) {
+        $in_codeish       = 0;
+        $codeish_close_re = undef;
+        $codeish_target   = '';
+      }
+
+      next;
+    }
+
+    my $active_html_level = $in_ep_payload ? $ep_html_level : $html_level;
+
+    if ( $line =~ m{^\s*</$block\b}i ) {
+      if ( $in_ep_payload ) {
+        $ep_html_level-- if $ep_html_level > 0;
+        $active_html_level = $ep_html_level;
+      } else {
+        $html_level-- if $html_level > 0;
+        $active_html_level = $html_level;
+      }
+    }
+
+    my $base_level =
+          $in_ep_payload
+        ? $ep_level + 1
+        : 0;
+
+    my $target = $indent x ( $base_level + $active_html_level );
+
+    if ( $line =~ /^\s*<(script|style|pre)\b/i ) {
+      my $tag = $1;
+
+      my $leading = '';
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $target ) ) {
+        $line =~ s/^\s*/$target/;
+      }
+
+      push @out, $line;
+
+      if ( $line !~ m{</$tag>}i ) {
+        $in_codeish       = 1;
+        $codeish_close_re = qr{^\s*</$tag>}i;
+        $codeish_target   = $target;
+      }
+
+      next;
+    }
+
+    if ( length $line ) {
+      my $leading = '';
+
+      if ( $line =~ /^(\s*)/ ) {
+        $leading = $1;
+      }
+
+      if ( length( $leading ) < length( $target ) ) {
+        $line =~ s/^\s*/$target/;
+      }
+    }
+
+    push @out, $line;
+
+    if (    $line =~ /^\s*<$block\b/i
+         && $line !~ /^\s*<$void\b/i
+         && $line !~ m{</$block>}i
+         && $line !~ m{/>[ \t]*\z} )
+    {
+      if ( $in_ep_payload ) {
+        $ep_html_level++;
+      } else {
+        $html_level++;
+      }
+    }
+  }
+
+  return join "\n", @out;
+}
+
 sub _html_separate_blocks ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   my $block =
-      qr/(?:div|section|article|table|thead|tbody|tfoot|tr|td|th|ul|ol|p)/;
+      qr/(?:div|label|section|article|table|thead|tbody|tfoot|tr|th|ul|ol|p)/;
 
   $text =~ s{(<$block\b[^>]*>)[ \t]*(?=<$block\b)}{$1\n}gi;
   $text =~ s{(</$block>)[ \t]*(?=<$block\b)}{$1\n}gi;
@@ -351,9 +723,19 @@ sub _html_separate_blocks ( $self, $text ) {
   $text =~ s{(</a>)[ \t]*(?=<div\b[^>]*\bdropdown-divider\b)}{$1\n}gi;
   $text =~ s{(</div>)[ \t]*(?=<a\b)}{$1\n}gi;
 
+  # Paragraphs are visual text blocks; separate them from preceding HTML closes.
+  $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)[ \t]*\n?(<p\b)}{$1\n\n$2}gi;
+
+  # Paragraph text should not stay glued to <p> when mixed EP content follows.
+  $text =~ s{(<p\b[^>]*>)[ \t]*(?=\S)}{$1\n}gi;
+
   # Close list-item internals cleanly.
   $text =~ s{(</a>)[ \t]*(?=</li>)}{$1\n}gi;
   $text =~ s{(</div>)[ \t]*(?=</li>)}{$1\n}gi;
+
+  # Closing container tags glued to prior tag should be separated before
+  # baseline HTML indentation sees the structure.
+  $text =~ s{(?<!-)>[ \t]*(?=</(?:$block)>)}{>\n}gi;
 
   return $text;
 }
@@ -904,7 +1286,7 @@ sub _pt_run ( $self, $perl, $idx = 1 ) {
   waitpid $pid, 0;
   my $status = $? >> 8;
 
-  open my $dbg, '>', './tmp/pt.raw-perltidy.out'
+  open my $dbg, '>>', './tmp/pt.raw-perltidy.out'
       or die "Cannot write ./tmp/pt.raw-perltidy.out: $!";
   print {$dbg} $tidied;
   close $dbg;
@@ -990,6 +1372,9 @@ sub _remove_extra_newlines ( $self, $text ) {
   return '' unless defined $text && length $text;
 
   $text =~ s/\n{3,}/\n\n/g;
+
+  # Do not leave an empty line before paragraph close.
+  $text =~ s{\n{2,}(?=</p>)}{\n}gi;
 
   return $text;
 }
@@ -1112,6 +1497,13 @@ sub _separate_blocks ( $self, $text ) {
   my $ctl = qr/(?:if|unless|for|foreach|while)/;
   $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
   $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
+
+  # Table cells containing code payload read better as a small block.
+  #   $text =~ s{(<td\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</td>)}
+  #             {$1\n$2\n$3}gis;
+  #   $text =~ s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}
+  #             {$1\n$2\n$3}gis;
+
   return $text;
 
 }
@@ -1128,7 +1520,18 @@ sub tidy ( $self, $input ) {
 
   $out = $self->_ep_postfix_indentation( $out );
 
+  $out = $self->_html_baseline_indentation( $out );
+
+  if ( $self->{attributes} ) {
+    $out = $self->_html_attrib_container( $out );
+    $out = $self->_html_attrib_solo( $out );
+    $out = $self->_html_attrib_paired( $out );
+  }
+
+  #   $out = $self->_html_postfix_label_closers( $out );
+
   $out = $self->_separate_blocks( $out );
+
   $out = $self->_remove_extra_newlines( $out );
 
   return $out;
@@ -1136,3 +1539,48 @@ sub tidy ( $self, $input ) {
 
 1;
 
+# sub _html_postfix_label_closers ( $self, $text ) {
+#   return '' unless defined $text && length $text;
+#
+#   my @out;
+#   my @label_indent;
+#
+#   for my $line ( split /\n/, $text, -1 ) {
+#     if ( $line =~ /^([ \t]*)<label\b/i ) {
+#       push @label_indent, $1;
+#       push @out,          $line;
+#       next;
+#     }
+#
+#     if ( $line =~ /^[ \t]*<\/label>/i && @label_indent ) {
+#       my $indent = pop @label_indent;
+#       $line =~ s/^[ \t]*/$indent/;
+#       push @out, $line;
+#       next;
+#     }
+#
+#     push @out, $line;
+#   }
+#
+#   return join "\n", @out;
+# }
+
+#
+# sub _debug_button_slice ( $self, $label, $text ) {
+#   return unless defined $text;
+#
+#   my $idx = 0;
+#
+#   while ( $text =~ /(<button\b[\s\S]*?<\/button>)/g ) {
+#     $idx++;
+#
+#     my $slice = $1;
+#     $slice =~ s/ /·/g;
+#     $slice =~ s/\n/⏎\n/g;
+#
+#     warn
+# "\n--- $label button#$idx ---\n$slice\n--- end $label button#$idx ---\n";
+#   }
+#
+#   return;
+# }

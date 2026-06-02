@@ -42,12 +42,15 @@ my $version            = 0;
 my $write              = 0;
 
 GetOptions(
-  'attributes|attrib|a!' => sub { $attributes = 1; $cli_attributes_set = 1; },
-  'backup'               => \$backup,
-  'backup-ext=s'         => \$backup_ext,
-  'check'                => \$check,
-  'columns|cols|c=i'     => \$columns,
-  'config=s'             => sub ( $opt, $val ) {
+  'attributes|attrib|a!' => sub ( $opt, $val ) {
+    $attributes         = $val ? 1 : 0;
+    $cli_attributes_set = 1;
+  },
+  'backup'           => \$backup,
+  'backup-ext=s'     => \$backup_ext,
+  'check'            => \$check,
+  'columns|cols|c=i' => \$columns,
+  'config=s'         => sub ( $opt, $val ) {
     $config_path    = $val;
     $cli_config_set = 1;
   },
