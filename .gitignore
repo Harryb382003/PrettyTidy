@@ -19,3 +19,4 @@ share/samples/happy_fappy.html.ep
 share/samples/modern_js_fixture.html.ep
 lib/Mojo/PrettyTidy-0.pm
 share/samples/testing
+share/debug_from_mojo.html

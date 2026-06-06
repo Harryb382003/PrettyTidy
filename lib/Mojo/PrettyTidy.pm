@@ -58,6 +58,23 @@ sub _chunk ( $self, $text ) {
 sub _ep_early_breakpoints ( $self, $text ) {
   return '' unless defined $text && length $text;
 
+  # Protect quoted attribute values containing HTML-ish fragments so the
+  # breakpoint rules do not split tags inside attributes, e.g.
+  # data-bs-title="<b>Regex:</b><code>...</code>"
+  my @protected_attr_values;
+
+  $text =~ s{
+    =
+    (
+        "[^"]*<[^"]*"
+      | '[^']*<[^']*'
+    )
+  }{
+    my $value = $1;
+    push @protected_attr_values, $value;
+    '=' . '__PT_ATTRVAL_' . $#protected_attr_values . '__';
+  }gex;
+
   # HTML comments are their own visible units. Multi-line comment bodies are
   # otherwise left alone.
   $text =~ s{\n*(<!--)}{\n$1}g;
@@ -65,25 +82,74 @@ sub _ep_early_breakpoints ( $self, $text ) {
 
   # Split common block-ish tags that flattening glued together.
   my @document_tags = qw(html head body title meta link);
-  my @script_tags   = qw(script style);
   my @form_tags     = qw(form label input select option button);
-  my @table_tags    = qw(table thead tbody tr td th);
+  my @heading_tags  = qw(h1 h2 h3 h4 h5 h6);
+  my @inline_tags   = qw(i span b);
+  my @layout_tags   = qw(div main pre section article svg);
   my @list_tags     = qw(ul ol li);
-  my @layout_tags   = qw(div pre section article);
+  my @media_tags    = qw(picture source img);
+  my @script_tags   = qw(script style);
+  my @svg_tags      = qw(svg path);
+  my @table_tags    = qw(table thead tbody tr td th);
 
   my $break_tag = join '|',
       @document_tags,
-      @script_tags,
       @form_tags,
-      @table_tags,
+      @heading_tags,
+      @inline_tags,
+      @layout_tags,
       @list_tags,
-      @layout_tags;
+      @media_tags,
+      @script_tags,
+      @svg_tags,
+      @table_tags,;
 
-  # Table cells containing code payload read better as a small block.
-  $text =~
-s{(<td\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</td>)}{$1\n$2\n$3}gis;
-  $text =~
-s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}{$1\n$2\n$3}gis;
+  my $b_body = qr{(?:(?:<%[\s\S]*?%>)|[^<\n])*};
+
+  # Headings are block-ish even when glued to surrounding text.
+  $text =~ s{(<div\b[^>]*>)[ \t]*(?=<h[1-6]\b)}{$1\n}gi;
+  $text =~ s{(</h[1-6]>)[ \t]*(?=\S)}{$1\n}gi;
+
+  # Table cells containing code-ish payload read better as a small block.
+  $text =~ s{
+    (<t[dh]\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</t[dh]>)}
+    {$1\n$2\n$3}gis;
+  $text =~ s{
+    (<t[dh]\b[^>]*>)[ \t]*(<pre\b[^>]*>.*?</pre>)[ \t]*(</t[dh]>)}
+    {$1\n$2\n$3}gis;
+
+  # pre/code nesting should be readable as a block.
+  $text =~ s{(<pre\b[^>]*>)[ \t]*(<code\b[^>]*>)}{$1\n$2}gi;
+  $text =~ s{(</code>)[ \t]*(</pre>)}{$1\n$2}gi;
+
+  # Code-ish block payload inside table cells should not keep </td>/</th> glued.
+  $text =~ s{(</(?:pre|code)>)[ \t\r\n]*(</t[dh]>)}{$1\n$2}gi;
+
+  # Closing tag before table-cell close should break away.
+  # This avoids <pre>...</pre></td>, <code>...</code></td>, etc.
+  $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)[ \t]*(</t[dh]>)}{$1\n$2}g;
+
+  # In pre/code blocks, put simple EP output payload on its own line.
+  $text =~ s{
+    (<pre\b[^>]*>\s*<code\b[^>]*>)
+    [ \t]*
+    (<%=[\s\S]*?%>)
+    [ \t]*
+    (</code>\s*</pre>)}
+    {$1\n$2\n$3}gxi;
+
+  # Div text payload should not stay glued to the opening <div>.
+  $text =~ s{(<div\b[^>]*>)[ \t]*(?=[^<\s])}{$1\n}gi;
+
+  # Text payload glued to an anchor should break before the anchor.
+  $text =~ s{([^\s>])(?=<a\b)}{$1\n}gi;
+
+  # Div payload containing inline/nested markup
+  # should not stay glued to the opening <div>.
+  $text =~ s{(<div\b[^>]*>)[ \t]*(?=<(?:i|svg|span|b|a)\b)}{$1\n}gi;
+
+  # Div close should not stay glued to text payload.
+  $text =~ s{([^\s>])</div>}{$1\n</div>}gi;
 
   # Input after label text, e.g. <label>Search:<input ...>
   $text =~ s{(<label\b[^>]*>[^<\n]*?)(?=<input\b)}{$1\n}gi;
@@ -109,11 +175,24 @@ s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}{$1\n$2\n$3}gis;
   $text =~ s{(</script>)[ \t]*(?=<)}{$1\n}gi;
   $text =~ s{(</style>)[ \t]*(?=<)}{$1\n}gi;
 
+  # Media containers: solo media tags should not stay glued to </picture>.
+  $text =~ s{(?<!-)>[ \t]*(?=</picture>)}{>\n}gi;
+  $text =~ s{(</picture>)[ \t]*(</a>)}{$1\n$2}gi;
+
+  # SVG/icon payload should not stay glued to its closing wrappers.
+  $text =~ s{(?<!-)>[ \t]*(?=</(?:svg|i)>)}{>\n}gi;
+  $text =~ s{(</svg>)[ \t]*(</i>)}{$1\n$2}gi;
+
   # Closing tag glued to another tag or EP marker.
   $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)[ \t]*(?=<|%)}{$1\n}g;
 
-  # Keep a closing table cell with the preceding inline close for now.
-  $text =~ s{(</[A-Za-z][A-Za-z0-9:_-]*>)\n(</td>)}{$1$2}g;
+  # Keep terse inline table-cell content joined, but not code-ish blocks.
+  $text =~
+s{(</(?!pre\b|code\b|span\b)[A-Za-z][A-Za-z0-9:_-]*>)\n(</t[dh]>)}{$1$2}gi;
+  $text =~ s{(</span>)[ \t]*(</t[dh]>)}{$1\n$2}gi;
+
+  # Code-ish cell payload closers must stay broken away from </td>/</th>.
+  $text =~ s{(</(?:pre|code)>)[ \t]*(</t[dh]>)}{$1\n$2}gi;
 
   # If a table cell contains code payload, put the cell closer on its own line.
   $text =~ s{(</code>)[ \t]*(</td>)}{$1\n$2}gi;
@@ -129,8 +208,9 @@ s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}{$1\n$2\n$3}gis;
   $text =~ s{(?<!\n)(?=%\s*(?:if|unless|for|foreach|while)\b)}{\n}g;
 
   # EP opener/transition glued to trailing payload.
-  $text =~
-s{(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=\S)}
+  $text =~ s{
+(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=\S)
+}
 {$1\n}gx;
 
   # EP begin glued to trailing template payload.
@@ -145,11 +225,12 @@ s{(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=
   $text =~ s{(%\s*\})(?=\S)}{$1\n}gx;
 
   # Before EP expression-output lines:
-  #   $text =~ s{(?<!\n)(?=%=)}{\n}gx;
   $text =~ s{ (?<![\n<]) (?=%=) }{\n}gx;
 
-  # Before EP control/statement lines.
+  # EP expression/helper output glued to an HTML closing tag.
+  $text =~ s{(^\s*%=\s*[^\n]*?)(?=</[A-Za-z][A-Za-z0-9:_-]*>)}{$1\n}gmx;
 
+  # Before EP control/statement lines.
   $text =~ s{
     (?<!\n)
     (?=%\s*(?:if|elsif|else|unless|for|foreach|while|my|our|state|return)\b)
@@ -168,7 +249,10 @@ s{(%\s*(?:\}\s*)?(?:if|elsif|else|unless|for|foreach|while)\b[^\n]*?(?<!@)\{)(?=
 
   $text = $self->_js_prebake_scripts( $text );
 
-  #   $text = $self->_normalize_ep_multiline_deref_blocks( $text );
+  for my $i ( 0 .. $#protected_attr_values ) {
+    my $token = '__PT_ATTRVAL_' . $i . '__';
+    $text =~ s{\Q$token\E}{$protected_attr_values[$i]}g;
+  }
 
   return $text;
 }
@@ -353,6 +437,7 @@ sub ep_source_file ( $self, $file ) {
 sub _flatten ( $self, $text ) {
   return '' unless defined $text && length $text;
 
+  $text = $self->_html_prebake_text_payload_newlines( $text );
   $text =~ s/\r\n?/\n/g;
 
   my @lines = split /\n/, $text;
@@ -365,73 +450,146 @@ sub _flatten ( $self, $text ) {
   return join '', grep {length} @lines;
 }
 
+sub _html_attrib_option ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  my $indent = ' ' x $self->{indent_width};
+
+  $text =~ s{
+  ^([ \t]*)
+  (<option\b)
+  (
+    (?:
+      "[^"]*"
+      |
+      '[^']*'
+      |
+      <%=[\s\S]*?%>
+      |
+      [^'">\n]
+    )*
+  )
+  >
+  (
+    <%=[\s\S]*?%>
+    |
+    [^<\n]*
+  )
+  </option>
+}{
+    do {
+      my ( $leading, $open, $attrs, $body ) = ( $1, $2, $3, $4 );
+
+      $attrs =~ s/^\s+//;
+      $attrs =~ s/\s+\z//;
+      $body  =~ s/^\s+//;
+      $body  =~ s/\s+\z//;
+
+      my @parts = $attrs =~ /(
+        <%=[\s\S]*?%>
+        |
+        [^\s=<]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?
+      )/gx;
+
+      if ( @parts <= 1 ) {
+        "$leading$open $attrs>$body</option>";
+      }
+      else {
+        my $first = shift @parts;
+        $first =~ s/^\s+//;
+        $first =~ s/\s+\z//;
+
+        my $out = "$leading$open $first";
+
+        for my $part ( @parts ) {
+          $part =~ s/^\s+//;
+          $part =~ s/\s+\z//;
+
+          $out .= "\n$leading$indent$part";
+        }
+
+        $out .= ">$body";
+        $out .= "\n$leading</option>";
+
+        $out;
+      }
+    }
+  }gexim;
+
+  return $text;
+}
+
 sub _html_attrib_paired ( $self, $text ) {
   return '' unless defined $text && length $text;
-  my $indent         = ' ' x $self->{indent_width};
-  my $attr_indent    = $indent x 2;
-  my $body_indent    = $indent;
-  my $button_matches = 0;
 
-  my @tags = qw( button );
-  my $tag  = join '|', @tags;
+  my $indent = ' ' x $self->{indent_width};
+  my @tags   = qw(button a);
+  my $tag    = join '|', @tags;
 
   $text =~ s{
     ^([ \t]*)
-    (<$tag\b)
+    (<($tag)\b)
     ((?:"[^"]*"|'[^']*'|[^'">])*)
     >
     ([\s\S]*?)
-    </$tag>
+    </\3>
   }{
     do {
-      $button_matches++;
+      my ( $leading, $open, $tag_name, $attrs, $body ) =
+          ( $1, $2, $3, $4, $5 );
 
-      my ( $leading, $open, $attrs, $body ) = ( $1, $2, $3, $4 );
+      my $attr_indent    = $leading . ( $indent x 2 );
+      my $payload_indent = $leading . $indent;
 
-      if ( $body =~ /</ ) {
-        "$leading$open$attrs>$body</$tag>";
-      }
-      else {
-        $attrs =~ s/\s+/ /g;
-        $attrs =~ s/^\s+//;
-        $attrs =~ s/\s+\z//;
+      $attrs =~ s/\s+/ /g;
+      $attrs =~ s/^\s+//;
+      $attrs =~ s/\s+\z//;
 
-        $body =~ s/^\s+//;
-        $body =~ s/\s+\z//;
+      # Repair glued attributes like:
+      #   aria-controls="navbarNav"aria-expanded="false"
+      $attrs =~ s/("[^"]*")(?=[A-Za-z_:][A-Za-z0-9_:.:-]*=)/$1 /g;
+      $attrs =~ s/('[^']*')(?=[A-Za-z_:][A-Za-z0-9_:.:-]*=)/$1 /g;
 
-        if ( $attrs !~ /\S/ ) {
-          "$leading$open>$body</$tag>";
+      $body =~ s/^\s+//;
+      $body =~ s/\s+\z//;
+
+      if ( $attrs !~ /\S/ ) {
+        if ( length $body ) {
+          "$leading$open>\n$payload_indent$body\n$leading</$tag_name>";
         }
         else {
-          my @attrs = $attrs =~
-/([^\s=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)/g;
+          "$leading$open></$tag_name>";
+        }
+      }
+      else {
+        my @attrs = $attrs =~ /([^\s=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)/g;
 
-          if ( @attrs <= 1 && $body !~ /\S/ ) {
-            "$leading$open $attrs>$body</$tag>";
+        if ( @attrs <= 1 && $body !~ /\S/ ) {
+          "$leading$open $attrs></$tag_name>";
+        }
+        else {
+          my $first = shift @attrs;
+          $first =~ s/^\s+//;
+          $first =~ s/\s+\z//;
+
+          my $out = "$leading$open $first";
+
+          for my $attr ( @attrs ) {
+            $attr =~ s/^\s+//;
+            $attr =~ s/\s+\z//;
+
+            $out .= "\n$attr_indent$attr";
           }
-          else {
-            my $first = shift @attrs;
-            $first =~ s/^\s+//;
-            $first =~ s/\s+\z//;
 
-            my $out = "$leading$open $first";
+          $out .= ">";
 
-            for my $attr ( @attrs ) {
-              $attr =~ s/^\s+//;
-              $attr =~ s/\s+\z//;
-
-              $out .= "\n$leading$attr_indent$attr";
-            }
-
-            $out .= ">";
-
-            if ( length $body ) {
-              $out .= "\n$leading$body_indent$body";
-            }
-
-            $out .= "\n$leading</$tag>";
-            $out;
+          if ( length $body ) {
+            $out .= "\n$payload_indent$body";
           }
+
+          $out .= "\n$leading</$tag_name>";
+
+          $out;
         }
       }
     }
@@ -443,13 +601,16 @@ sub _html_attrib_paired ( $self, $text ) {
 sub _html_attrib_container ( $self, $text ) {
   return '' unless defined $text && length $text;
 
-  my @tags   = qw( form );
-  my $tag    = join '|', @tags;
-  my $indent = ' ' x $self->{indent_width};
+  my $indent      = ' ' x $self->{indent_width};
+  my $attr_indent = $indent x 2;
+
+  my @tags = qw(div form main select picture svg tr);
+
+  my $tag = join '|', @tags;
 
   $text =~ s{
     ^([ \t]*)
-    (<$tag\b)
+    (<(?:$tag)\b)
     ((?:"[^"]*"|'[^']*'|[^'">\n])*)
     (>)
   }{
@@ -470,7 +631,7 @@ sub _html_attrib_container ( $self, $text ) {
           $first =~ s/^\s+//;
           $first =~ s/\s+\z//;
 
-          my $cont_indent = $leading . ( $indent x 2 );
+          my $cont_indent = $leading . $attr_indent;
           my $out = "$leading$open $first";
 
           for my $i ( 0 .. $#attrs ) {
@@ -499,18 +660,21 @@ sub _html_attrib_container ( $self, $text ) {
 sub _html_attrib_solo ( $self, $text ) {
   return '' unless defined $text && length $text;
 
-  my $indent = ' ' x $self->{indent_width};
-  my @tags   = qw( input );
-  my $tag    = join '|', @tags;
+  my $indent   = ' ' x $self->{indent_width};
+  my @tags     = qw(img input path source);
+  my @closures = qw(label form div td th li);
+  my $tag      = join '|', @tags;
+  my $closures = join '|', @closures;
 
   $text =~ s{
     ^([ \t]*)
-    (<$tag\b)
+    (<($tag)\b)
     ((?:"[^"]*"|'[^']*'|[^'">\n])*)
     (>)
   }{
     do {
-      my ( $leading, $open, $attrs, $close ) = ( $1, $2, $3, $4 );
+      my ( $leading, $open, $tag_name, $attrs, $close ) =
+          ( $1, $2, $3, $4, $5 );
 
       if ( $attrs !~ /\S/ ) {
         "$leading$open$attrs$close";
@@ -550,8 +714,25 @@ sub _html_attrib_solo ( $self, $text ) {
   }gexim;
 
   # If a multiline solo tag is glued to a closing container tag, split it.
-  $text =~
-s{^([ \t]*)([^<\n]*>)[\t]*(</(?:label|form|div|td|th|li)>)}{$1$2\n$1$3}gmi;
+  # The closer belongs one indent level above the solo tag.
+  $text =~ s{
+    ^([ \t]*)
+    ([^<\n]*>)
+    [ \t]*
+    (</(?:$closures)>)
+  }{
+    do {
+      my ( $leading, $tag_end, $closing ) = ( $1, $2, $3 );
+      my $close_indent = $leading;
+
+      if ( length( $close_indent ) >= length( $indent ) ) {
+        substr( $close_indent, -length( $indent ) ) = '';
+      }
+
+      "$leading$tag_end\n$close_indent$closing";
+    }
+  }gexim;
+
   return $text;
 }
 
@@ -568,16 +749,24 @@ sub _html_baseline_indentation ( $self, $text ) {
   my $indent           = ' ' x $self->{indent_width};
 
   my $block = qr{
-    (?:
-      form|label|select|option|button|input
-      |div|code
-      |table|thead|tbody|tfoot|tr|td|th|p
-      |ul|ol|li
-      |section|article
-    )
-  }x;
+  (?:
+    form|label|select|option|button|input
+    |div|main|code|picture|source|img|pre
+    |i|svg|path
+    |table|thead|tbody|tfoot|tr|td|th|p
+    |ul|ol|li|a
+    |section|article
+  )
+}x;
 
-  my $void = qr{(?:input|meta|link|img|br|hr|code)};
+  my $void = qr{
+  (?:
+    input|meta|link
+    |img|br|hr
+    |h1|h2|h3|h4|h5|h6
+    |source|path
+  )
+}x;
 
   for my $line ( split /\n/, $text, -1 ) {
     my $kind = $self->_ep_control( $line );
@@ -625,8 +814,9 @@ sub _html_baseline_indentation ( $self, $text ) {
     }
 
     my $active_html_level = $in_ep_payload ? $ep_html_level : $html_level;
+    my $is_closing_block  = $line =~ m{^\s*</$block\b}i ? 1 : 0;
 
-    if ( $line =~ m{^\s*</$block\b}i ) {
+    if ( $is_closing_block ) {
       if ( $in_ep_payload ) {
         $ep_html_level-- if $ep_html_level > 0;
         $active_html_level = $ep_html_level;
@@ -643,7 +833,7 @@ sub _html_baseline_indentation ( $self, $text ) {
 
     my $target = $indent x ( $base_level + $active_html_level );
 
-    if ( $line =~ /^\s*<(script|style|pre)\b/i ) {
+    if ( $line =~ /^\s*<(script|style)\b/i ) {
       my $tag = $1;
 
       my $leading = '';
@@ -673,7 +863,9 @@ sub _html_baseline_indentation ( $self, $text ) {
         $leading = $1;
       }
 
-      if ( length( $leading ) < length( $target ) ) {
+      if ( $is_closing_block ) {
+        $line =~ s/^\s*/$target/;
+      } elsif ( length( $leading ) < length( $target ) ) {
         $line =~ s/^\s*/$target/;
       }
     }
@@ -694,6 +886,16 @@ sub _html_baseline_indentation ( $self, $text ) {
   }
 
   return join "\n", @out;
+}
+
+sub _html_prebake_text_payload_newlines ( $self, $text ) {
+  return '' unless defined $text && length $text;
+
+  # Flattening plain text lines should preserve word separation.
+  # Do not use this inside code-ish blocks.
+  $text =~ s{([A-Za-z0-9,.;:!?'\")\]])\n[ \t]*(?=[A-Za-z0-9'\"])}{$1 }g;
+
+  return $text;
 }
 
 sub _html_separate_blocks ( $self, $text ) {
@@ -729,6 +931,28 @@ sub _html_separate_blocks ( $self, $text ) {
   # Paragraph text should not stay glued to <p> when mixed EP content follows.
   $text =~ s{(<p\b[^>]*>)[ \t]*(?=\S)}{$1\n}gi;
 
+  # Paragraph text should not stay glued to the opening <p>.
+  $text =~ s{(<p\b[^>]*>)[ \t]*(?=\S)}{$1\n}gi;
+
+  # Paragraph close should not stay glued to text payload.
+  $text =~ s{([^\s>])</p>}{$1\n</p>}gi;
+
+  # Paragraph payload text to be preserved including internal tags.
+  $text =~ s{
+    (<(p)\b[^>]*>)
+    ([\s\S]*?)
+    (</\2>)
+  }{
+    my ( $open, $tag_name, $body, $close ) = ( $1, $2, $3, $4 );
+    $body =~ s/^\s+//;
+    $body =~ s/\s+\z//;
+    "$open\n$body\n$close";
+  }gexi;
+
+  # Inline code in prose gets readable line breaks.
+  $text =~ s{([^\s>])(<code\b)}{$1\n$2}gi;
+  $text =~ s{(</code>)[ \t]*(?=[,.;:!?]|\w)}{$1\n}gi;
+
   # Close list-item internals cleanly.
   $text =~ s{(</a>)[ \t]*(?=</li>)}{$1\n}gi;
   $text =~ s{(</div>)[ \t]*(?=</li>)}{$1\n}gi;
@@ -756,7 +980,7 @@ sub _html_separate_landmarks ( $self, $text ) {
 s{(<nav\b[^>]*\bnavbar\b[^>]*>)\n?(<a\b[^>]*\bnavbar-brand\b[^>]*>)}{$1\n\n$2}gi;
 
   # Main content landmark.
-  $text =~ s{(<div\b[^>]*>)\n(<main\b[^>]*>)}{$1\n\n$2}gi;
+  $text =~ s{(<div\b[^>]*>)\n(<main\b[^>]*>)}{$1\n$2}gi;
 
   # Footer landmark.
   $text =~ s{(</div>)\n(</div>)\n(<footer\b[^>]*>)}{$1\n$2\n\n$3}gi;
@@ -1376,6 +1600,13 @@ sub _remove_extra_newlines ( $self, $text ) {
   # Do not leave an empty line before paragraph close.
   $text =~ s{\n{2,}(?=</p>)}{\n}gi;
 
+  # Empty div containers should collapse to one line.
+  $text =~ s{
+  (<div\b[^>]*>)
+  \s*
+  (</div>)
+}{$1$2}gix;
+
   return $text;
 }
 
@@ -1498,12 +1729,6 @@ sub _separate_blocks ( $self, $text ) {
   $text =~ s{(<$tag\b[^>]*>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
   $text =~ s{(</$tag>)\n(%\s*$ctl\b)}{$1\n\n$2}g;
 
-  # Table cells containing code payload read better as a small block.
-  #   $text =~ s{(<td\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</td>)}
-  #             {$1\n$2\n$3}gis;
-  #   $text =~ s{(<th\b[^>]*>)[ \t]*(<code\b[^>]*>.*?</code>)[ \t]*(</th>)}
-  #             {$1\n$2\n$3}gis;
-
   return $text;
 
 }
@@ -1522,10 +1747,14 @@ sub tidy ( $self, $input ) {
 
   $out = $self->_html_baseline_indentation( $out );
 
+  $self->_debug_brand_block( 'baseline 1', $out );
+
   if ( $self->{attributes} ) {
     $out = $self->_html_attrib_container( $out );
     $out = $self->_html_attrib_solo( $out );
+    $out = $self->_html_attrib_option( $out );
     $out = $self->_html_attrib_paired( $out );
+    $out = $self->_html_baseline_indentation( $out );    # yes, again
   }
 
   #   $out = $self->_html_postfix_label_closers( $out );
@@ -1538,6 +1767,21 @@ sub tidy ( $self, $input ) {
 }
 
 1;
+
+sub _debug_brand_block ( $self, $label, $text ) {
+  return unless defined $text;
+  my $debug_brand = 0;
+  if ( $text =~ /(<a\b[^>]*mojolicious\.org[\s\S]*?<button\b)/ ) {
+    my $slice = $1;
+    $slice =~ s/ /·/g;
+    $slice =~ s/\n/⏎\n/g;
+
+    warn
+"\n--- $label brand block ---\n$slice\n--- end $label brand block ---\n";
+  }
+
+  return;
+}
 
 # sub _html_postfix_label_closers ( $self, $text ) {
 #   return '' unless defined $text && length $text;
@@ -1584,3 +1828,61 @@ sub tidy ( $self, $input ) {
 #
 #   return;
 # }
+
+#   # Preserve rendered word spacing around inline paired tags before later
+#   # breakpoint rules split them across lines.
+#   my @inline_pair_spacing_tags = qw(a b);
+#   my $inline_pair_spacing_tag  = join '|', @inline_pair_spacing_tags;
+#   my $inline_pair_body         = qr{(?:(?:<%[\s\S]*?%>)|[^<\n])*};
+#
+#   # word <a ...>text</a>  -> word&nbsp;<a ...>text</a>
+#   # word <b ...>text</b>  -> word&nbsp;<b ...>text</b>
+#   $text =~ s{
+#     ([A-Za-z0-9])
+#     [ \t]+
+#     (?=<(?:$inline_pair_spacing_tag)\b)
+#   }{
+#     "$1&nbsp;"
+#   }gexi;
+#
+#   # </a> word  -> </a>&nbsp;word
+#   # </b> word  -> </b>&nbsp;word
+#   #
+#   # Do not fire before punctuation; punctuation should stay attached.
+#   $text =~ s{
+#     (</(?:$inline_pair_spacing_tag)>)
+#     [ \t]+
+#     (?=[A-Za-z0-9])
+#   }{
+#     "$1&nbsp;"
+#   }gexi;
+#
+#   # <b> glued directly after a tag close or formatter-preserved &nbsp;
+#   # gets its own line.
+#   $text =~ s{
+#     (
+#         >
+#       | &nbsp;
+#     )
+#     [ \t]*
+#     (<b\b[^>]*>)
+#     ($inline_pair_body)
+#     (</b>)
+#   }{
+#     "$1\n$2$3$4"
+#   }gexi;
+#
+#   # Inline paired tag followed by formatter-preserved &nbsp; or word-space
+#   # gets its following word text moved to the next line.
+#   $text =~ s{
+#     (<(?:$inline_pair_spacing_tag)\b[^>]*>)
+#     ($inline_pair_body)
+#     (</(?:$inline_pair_spacing_tag)>)
+#     (
+#         &nbsp;
+#       | [ \t]+
+#     )
+#     (?=[A-Za-z0-9])
+#   }{
+#     "$1$2$3$4\n"
+#   }gexi;
