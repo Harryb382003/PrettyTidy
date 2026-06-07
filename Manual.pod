@@ -524,29 +524,29 @@ Config files use JSON object syntax. Supported keys may include:
 
 =over 4
 
-=item * C<indent_width>
-
-=item * C<tab_width>
+=item * C<attributes>
 
 =item * C<columns>
 
-=item * C<attributes>
+=item * C<indent_width>
 
 =item * C<javascript>
 
-=item * C<cleanup>
+=item * C<outdir>
+
+=item * C<perl>
 
 =item * C<prefix>
 
-=item * C<outdir>
+=item * C<tab_width>
 
 =back
 
 Example:
 
     {
-      "columns": 80,
       "attributes": 1,
+      "columns": 80,
       "javascript": 1,
       "prefix": "pt.",
       "outdir": "share/samples/testing"
