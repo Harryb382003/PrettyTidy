@@ -280,15 +280,20 @@ The formatter avoids treating prose as a generic wrapping target. Editor or
 terminal line wrapping is preferred for long prose until an explicit safe rule
 is added.
 
-=head1 EMBEDDED PERL
+=head1 EMBEDDED PERL FORMATTING
 
-Mojolicious C<.ep> templates mix HTML and Perl-like template directives. The
-formatter keeps separate visual tracks for Embedded Perl control flow and HTML
-structure.
+C<Mojo::PrettyTidy> uses C<perltidy> for Embedded Perl/code regions where
+possible. If C<$HOME/.perltidyrc> exists, it is passed to C<perltidy>, so
+your normal Perl indentation preferences are inherited.
 
-Percent-code lines align according to EP/code flow. HTML payload lines align
-according to local HTML structure. In mixed regions those columns may differ
-intentionally.
+PrettyTidy still overrides a small number of C<perltidy> settings where needed
+for template formatting. In particular, it sets a very large line length
+(C<-l=9999>) so C<perltidy> does not make wrapping decisions. Width-aware
+template expansion is handled by PrettyTidy itself, for example through
+C<--cols>.
+
+PrettyTidy also runs C<perltidy> through standard input/output in quiet mode
+and currently uses C<-nbbc> to avoid introducing blank lines before comments.
 
 =head1 JAVASCRIPT HANDLING
 
