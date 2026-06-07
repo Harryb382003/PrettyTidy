@@ -4,7 +4,7 @@ use v5.40.0;
 use common::sense;
 use feature 'signatures';
 
-use Getopt::Long qw(GetOptions);
+use Getopt::Long qw(:config no_ignore_case bundling);
 use File::Copy   qw(copy);
 use File::Spec;
 use File::Path qw(make_path);
@@ -15,75 +15,121 @@ use lib 'lib';
 use Mojo::PrettyTidy;
 use Mojo::PrettyTidy::Diff qw(unified_diff);
 
-my $attributes         = 1;
-my $backup             = 0;
-my $backup_ext         = '.bak';
-my $check              = 0;
-my $cli_attributes_set = 0;
-my $cli_config_set     = 0;
-my $cli_javascript_set = 0;
-my $cli_maxchars_set   = 0;
-my $cli_outdir_set     = 0;
-my $cli_prefix_set     = 0;
-my $cli_sourceview_set = 0;
-my $columns            = 0;
-my $config_path        = '.mojo-prettytidy.json';
-my $diff               = 0;
-my $help               = 0;
-my $javascript         = 1;
-my $man                = 0;
-my $maxchars           = 0;
-my $outdir             = '';
-my $output_path        = '';
-my $prefix             = '';
-my $sourceview         = 0;
-my $stdin              = 0;
-my $version            = 0;
-my $write              = 0;
+my %opt = (
+            attributes   => 1,
+            backup       => 0,
+            backup_ext   => '.bak',
+            check        => 0,
+            cleanup      => 0,
+            columns      => 80,
+            config       => '.mojo-prettytidy.json',
+            diff         => 0,
+            help         => 0,
+            javascript   => 1,
+            man          => 0,
+            maxchars     => 0,
+            outdir       => '',
+            output       => '',
+            prefix       => '',
+            show_options => 0,
+            sourceview   => 0,
+            stdin        => 0,
+            version      => 0,
+            write        => 0, );
+
+my %default_opt = %opt;
+my %opt_source  = map { $_ => 'default' } keys %opt;
 
 GetOptions(
-  'attributes|attrib|a!' => sub ( $opt, $val ) {
-    $attributes         = $val ? 1 : 0;
-    $cli_attributes_set = 1;
+  'attributes|attrib|a!' => sub ( $name, $val ) {
+    $opt{attributes}        = $val ? 1 : 0;
+    $opt_source{attributes} = 'cli';
   },
-  'backup'           => \$backup,
-  'backup-ext=s'     => \$backup_ext,
-  'check'            => \$check,
-  'columns|cols|c=i' => \$columns,
-  'config=s'         => sub ( $opt, $val ) {
-    $config_path    = $val;
-    $cli_config_set = 1;
+  'backup' => sub {
+    $opt{backup}        = 1;
+    $opt_source{backup} = 'cli';
   },
-  'diff'          => \$diff,
-  'help|h'        => \$help,
-  'javascript|j!' => \$javascript,
-  'man'           => \$man,
-  'maxchars:i'    => sub ( $opt, $val ) {
-    $cli_maxchars_set = 1;
-    $maxchars         = defined $val ? $val : 1;
+  'backup-ext=s' => sub ( $name, $val ) {
+    $opt{backup_ext}        = $val;
+    $opt_source{backup_ext} = 'cli';
   },
-  'output|o=s' => \$output_path,
-  'outdir=s'   => sub ( $opt, $val ) {
-    $outdir         = $val;
-    $cli_outdir_set = 1;
+  'check' => sub {
+    $opt{check}        = 1;
+    $opt_source{check} = 'cli';
   },
-  'prefix|pre=s' => sub ( $opt, $val ) {
-    $prefix         = $val;
-    $cli_prefix_set = 1;
+  'cleanup!' => sub ( $name, $val ) {
+    $opt{cleanup}        = $val ? 1 : 0;
+    $opt_source{cleanup} = 'cli';
   },
+  'columns|cols|c=i' => sub ( $name, $val ) {
+    $opt{columns}        = $val;
+    $opt_source{columns} = 'cli';
+  },
+  'config=s' => sub ( $name, $val ) {
+    $opt{config}        = $val;
+    $opt_source{config} = 'cli';
+  },
+  'no-columns|no-cols|nocols' => sub {
+    $opt{columns}        = 0;
+    $opt_source{columns} = 'cli';
+  },
+  'diff' => sub {
+    $opt{diff}        = 1;
+    $opt_source{diff} = 'cli';
+  },
+  'help|h' => sub {
+    $opt{help}        = 1;
+    $opt_source{help} = 'cli';
+  },
+  'javascript|j!' => sub ( $name, $val ) {
+    $opt{javascript}        = $val ? 1 : 0;
+    $opt_source{javascript} = 'cli';
+  },
+  'man' => sub {
+    $opt{man}        = 1;
+    $opt_source{man} = 'cli';
+  },
+  'maxchars:i' => sub ( $name, $val ) {
+    $opt{maxchars}        = defined $val ? $val : 1;
+    $opt_source{maxchars} = 'cli';
+  },
+  'output|o=s' => sub ( $name, $val ) {
+    $opt{output}        = $val;
+    $opt_source{output} = 'cli';
+  },
+  'outdir=s' => sub ( $name, $val ) {
+    $opt{outdir}        = $val;
+    $opt_source{outdir} = 'cli';
+  },
+  'prefix|pre=s' => sub ( $name, $val ) {
+    $opt{prefix}        = $val;
+    $opt_source{prefix} = 'cli';
+  },
+
+  'show-options|V+' => \$opt{show_options},
+
   'source|sourceview|source-view' => sub {
-    $sourceview         = 1;
-    $cli_sourceview_set = 1;
+    $opt{sourceview}        = 1;
+    $opt_source{sourceview} = 'cli';
   },
-  'stdin'     => \$stdin,
-  'version|v' => \$version,
-  'write|w'   => \$write,
+  'stdin' => sub {
+    $opt{stdin}        = 1;
+    $opt_source{stdin} = 'cli';
+  },
+  'version|v' => sub {
+    $opt{version}        = 1;
+    $opt_source{version} = 'cli';
+  },
+  'write|w' => sub {
+    $opt{write}        = 1;
+    $opt_source{write} = 'cli';
+  },
 ) or pod2usage( 2 );
 
-pod2usage( 1 )             if $help;
-pod2usage( -verbose => 2 ) if $man;
+pod2usage( 1 )             if $opt{help};
+pod2usage( -verbose => 2 ) if $opt{man};
 
-if ( $version ) {
+if ( $opt{version} ) {
   print "mojo-prettytidy $Mojo::PrettyTidy::VERSION\n";
   exit 0;
 }
@@ -92,97 +138,95 @@ my @inputs = @ARGV;
 
 my $cfg = {};
 
-if ( $cli_config_set ) {
-  $cfg = _load_config_file( $config_path );
-  _validate_config( $cfg, $config_path );
-} elsif ( -f $config_path ) {
-  $cfg = _load_config_file( $config_path );
-  _validate_config( $cfg, $config_path );
+if ( $opt_source{config} eq 'cli' ) {
+  $cfg = _load_config_file( $opt{config} );
+  _validate_config( $cfg, $opt{config} );
+} elsif ( -f $opt{config} ) {
+  $cfg = _load_config_file( $opt{config} );
+  _validate_config( $cfg, $opt{config} );
 }
 
-$attributes = $cfg->{attributes}
-    if exists $cfg->{attributes} && !$cli_attributes_set;
+for my $name (
+   qw(attributes javascript maxchars sourceview outdir prefix columns cleanup) )
+{
+  next unless exists $cfg->{$name};
+  next unless $opt_source{$name} eq 'default';
 
-$javascript = $cfg->{javascript}
-    if exists $cfg->{javascript} && !$cli_javascript_set;
+  $opt{$name}        = $cfg->{$name};
+  $opt_source{$name} = 'config';
+}
 
-$maxchars = $cfg->{maxchars}
-    if exists $cfg->{maxchars} && !$cli_maxchars_set;
-
-$sourceview = $cfg->{sourceview}
-    if exists $cfg->{sourceview} && !$cli_sourceview_set;
-
-$outdir = $cfg->{outdir}
-    if exists $cfg->{outdir} && !$cli_outdir_set;
-
-$prefix = $cfg->{prefix}
-    if exists $cfg->{prefix} && !$cli_prefix_set;
+_show_options( \%opt, \%opt_source, \%default_opt, \@inputs )
+    if $opt{show_options};
 
 pod2usage( "--backup requires --write\n" )
-    if $backup && !$write;
+    if $opt{backup} && !$opt{write};
 
 pod2usage( "--backup-ext requires --write\n" )
-    if defined( $backup_ext ) && $backup_ext ne '.bak' && !$write;
+    if defined( $opt{backup_ext} )
+    && $opt{backup_ext} ne '.bak'
+    && !$opt{write};
 
 pod2usage( "--check requires a single input file\n" )
-    if $check && _has_directory_input( @inputs );
+    if $opt{check} && _has_directory_input( @inputs );
 
 pod2usage( "--diff requires a single input file\n" )
-    if $diff && _has_directory_input( @inputs );
+    if $opt{diff} && _has_directory_input( @inputs );
 
 pod2usage( "--diff cannot be combined with --write\n" )
-    if $diff && $write;
+    if $opt{diff} && $opt{write};
 
 pod2usage( "--diff cannot be combined with --stdin\n" )
-    if $diff && $stdin;
+    if $opt{diff} && $opt{stdin};
 
 pod2usage( "--output cannot be combined with --check\n" )
-    if $output_path && $check;
+    if $opt{output} && $opt{check};
 
 pod2usage( "--output cannot be combined with --diff\n" )
-    if $output_path && $diff;
+    if $opt{output} && $opt{diff};
 
 pod2usage( "--output cannot be combined with --write\n" )
-    if $output_path && $write;
+    if $opt{output} && $opt{write};
 
 pod2usage( "--write cannot be combined with --prefix\n" )
-    if $write && length $prefix;
+    if $opt{write} && length $opt{prefix};
 
 pod2usage( "--write cannot be combined with --outdir\n" )
-    if $write && length $outdir;
+    if $opt{write} && length $opt{outdir};
 
 pod2usage( "--stdin cannot be combined with --write\n" )
-    if $stdin && $write;
+    if $opt{stdin} && $opt{write};
 
 pod2usage( "--stdin cannot be combined with --backup\n" )
-    if $stdin && $backup;
+    if $opt{stdin} && $opt{backup};
 
 pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
-    if $stdin && @inputs;
+    if $opt{stdin} && @inputs;
 
 pod2usage( "--maxchars requires --source-view\n" )
-    if $maxchars && !$sourceview;
+    if $opt{maxchars} && !$opt{sourceview};
 
 my $pt = Mojo::PrettyTidy->new(
-                                attributes => $attributes ? 1 : 0,
-                                javascript => $javascript ? 1 : 0,
-                                ( $columns  ? ( columns  => $columns )  : () ),
-                                ( $maxchars ? ( maxchars => $maxchars ) : () ),
-                                ( $sourceview ? ( sourceview => 1 )     : () ),
+                       attributes => $opt{attributes} ? 1 : 0,
+                       cleanup    => $opt{cleanup}    ? 1 : 0,
+                       columns    => $opt{columns} || 0,
+                       javascript => $opt{javascript} ? 1 : 0,
+                       ( $opt{maxchars} ? ( maxchars => $opt{maxchars} ) : () ),
+                       ( $opt{sourceview} ? ( sourceview => 1 )          : () ),
 );
 
-if ( $stdin ) {
+if ( $opt{stdin} ) {
   my $input = do { local $/; <STDIN> };
-  _warn_long_lines( $input, 'STDIN', $sourceview ) if !$maxchars;
+  _warn_long_lines( $input, 'STDIN', $opt{sourceview} ) if !$opt{maxchars};
   $pt->ep_source_file( 'stdin' );
   my $output = $pt->tidy( $input );
 
-  if ( $check ) {
+  if ( $opt{check} ) {
     exit( $output eq $input ? 0 : 1 );
   }
 
-  if ( $output_path ) {
-    _spew( $output_path, $output );
+  if ( $opt{output} ) {
+    _spew( $opt{output}, $output );
     exit 0;
   }
 
@@ -194,36 +238,39 @@ pod2usage( "No input provided. Supply a file, directory, or --stdin.\n" )
     unless @inputs;
 
 pod2usage( "--output cannot be combined with multiple inputs\n" )
-    if $output_path && @inputs > 1;
+    if $opt{output} && @inputs > 1;
 
 my @files = _collect_input_files( @inputs );
 
 pod2usage( "No input files found\n" ) unless @files;
 
 pod2usage( "--check requires a single input file\n" )
-    if $check && @files != 1;
+    if $opt{check} && @files != 1;
 
 pod2usage( "--diff requires a single input file\n" )
-    if $diff && @files != 1;
+    if $opt{diff} && @files != 1;
 
 pod2usage( "multiple inputs require --write, --prefix, or --outdir\n" )
-    if @files > 1 && !$write && !length( $prefix ) && !length( $outdir );
+    if @files > 1
+    && !$opt{write}
+    && !length( $opt{prefix} )
+    && !length( $opt{outdir} );
 
-_ensure_outdir( $outdir ) if length $outdir;
+_ensure_outdir( $opt{outdir} ) if length $opt{outdir};
 
 # single-file mode
-if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
+if ( @files == 1 && !length( $opt{prefix} ) && !length( $opt{outdir} ) ) {
   my $file  = $files[0];
   my $input = _slurp( $file );
-  _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
+  _warn_long_lines( $input, $file, $opt{sourceview} ) if !$opt{maxchars};
 
   $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
-  if ( $check ) {
+  if ( $opt{check} ) {
     exit( $output eq $input ? 0 : 1 );
   }
 
-  if ( $diff ) {
+  if ( $opt{diff} ) {
     my $diff_text = unified_diff(
                                   old       => $input,
                                   new       => $output,
@@ -238,14 +285,14 @@ if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
     exit 0;
   }
 
-  if ( $output_path ) {
-    _spew( $output_path, $output );
+  if ( $opt{output} ) {
+    _spew( $opt{output}, $output );
     exit 0;
   }
 
-  if ( $write ) {
-    if ( $backup ) {
-      my $backup_path = $file . $backup_ext;
+  if ( $opt{write} ) {
+    if ( $opt{backup} ) {
+      my $backup_path = $file . $opt{backup_ext};
       copy( $file, $backup_path )
           or die "Cannot create backup '$backup_path' from '$file': $!";
     }
@@ -261,13 +308,13 @@ if ( @files == 1 && !length( $prefix ) && !length( $outdir ) ) {
 # multi-file / directory mode
 for my $file ( @files ) {
   my $input = _slurp( $file );
-  _warn_long_lines( $input, $file, $sourceview ) if !$maxchars;
+  _warn_long_lines( $input, $file, $opt{sourceview} ) if !$opt{maxchars};
   $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
 
-  if ( $write ) {
-    if ( $backup ) {
-      my $backup_path = $file . $backup_ext;
+  if ( $opt{write} ) {
+    if ( $opt{backup} ) {
+      my $backup_path = $file . $opt{backup_ext};
       copy( $file, $backup_path )
           or die "Cannot create backup '$backup_path' from '$file': $!";
     }
@@ -276,7 +323,7 @@ for my $file ( @files ) {
     next;
   }
 
-  my $dest = _output_path_for( $file, $prefix, $outdir );
+  my $dest = _output_path_for( $file, $opt{prefix}, $opt{outdir} );
   _spew( $dest, $output );
 }
 
@@ -352,6 +399,46 @@ sub _output_path_for ( $input, $prefix, $outdir ) {
       : File::Spec->catfile( $dir,    $name );
 }
 
+sub _show_options ( $opt, $source, $defaults, $inputs ) {
+  my $show_all = ( $opt->{show_options} || 0 ) >= 2 ? 1 : 0;
+
+  print "mojo-prettytidy effective options:\n";
+
+  for my $name ( sort keys %$opt ) {
+    my $value = defined $opt->{$name} ? $opt->{$name} : '';
+    my $from  = $source->{$name} // 'unknown';
+
+    if ( !$show_all ) {
+      my $default = defined $defaults->{$name} ? $defaults->{$name} : '';
+
+      next
+          if $value eq ''
+          && $from eq 'default';
+
+      next
+          if !$value
+          && $value eq $default
+          && $from eq 'default';
+    }
+
+    my $label = $name;
+    $label =~ s/_/-/g;
+
+    printf "  %-14s =>  %-30s [%s]\n", $label, $value, $from;
+  }
+
+  if ( $show_all || @$inputs ) {
+    printf "  %-14s =>  %-30s [%s]\n", 'input-count', scalar( @$inputs ),
+        'input';
+
+    for my $i ( 0 .. $#$inputs ) {
+      printf "  %-14s =>  %-30s [%s]\n", "input[$i]", $inputs->[$i], 'input';
+    }
+  }
+
+  return;
+}
+
 sub _slurp ( $path ) {
   open my $fh, '<', $path or die "Cannot open '$path' for reading: $!";
   local $/;
@@ -376,6 +463,7 @@ sub _validate_config ( $cfg, $path ) {
       columns
       attributes
       javascript
+      cleanup
       maxchars
       sourceview
   );
@@ -422,10 +510,11 @@ sub _warn_long_lines ( $text, $label = '', $sourceview = 0 ) {
 
     if ( $sourceview ) {
       warn
-"input$where contains very long lines; consider --source-view --maxchars or --source-view --maxchars N for readability\n";
+"input$where contains very long lines; consider --source-view --maxchars or
+--source-view --maxchars N for readability\n";
     } else {
-      warn
-"input$where contains very long lines and may be machine-generated or editor-hostile\n";
+      warn "input$where contains very long lines and may be machine-generated or
+editor-hostile\n";
     }
 
     last;
@@ -433,185 +522,3 @@ sub _warn_long_lines ( $text, $label = '', $sourceview = 0 ) {
 }
 
 __END__
-
-=pod
-
-=head1 NAME
-
-mojo-prettytidy - Conservative tidy tool for Mojolicious .html.ep templates
-
-=head1 SYNOPSIS
-
-    mojo-prettytidy file.html.ep
-    mojo-prettytidy --check file.html.ep
-    mojo-prettytidy --config path/to/config.json file.html.ep
-    mojo-prettytidy --diff file.html.ep
-    mojo-prettytidy --output parsed.file.html.ep file.html.ep
-    mojo-prettytidy --stdin < file.html.ep
-    mojo-prettytidy --write file.html.ep
-    mojo-prettytidy --write --backup file.html.ep
-    mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep
-    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.
-    mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
-    mojo-prettytidy templates --prefix pt. --outdir parsed
-    mojo-prettytidy --version
-
-=head1 DESCRIPTION
-
-C<mojo-prettytidy> provides command-line access to L<Mojo::PrettyTidy>.
-
-The command is intended to be editor-friendly and suitable for use
-from tools such as Kate in a manner similar to C<perltidy>.
-
-By default, the formatted result is written to standard output.
-
-=head1 OPTIONS
-
-=head2 --write, -w
-
-Rewrite the input file in place.
-
-=head2 --backup
-
-When used with C<--write>, create a backup of the original file before
-rewriting it.
-
-=head2 --backup-ext
-
-When used with C<--write --backup>, choose the backup suffix.
-The default is C<.bak>.
-
-=head2 --check, -c
-
-Exit with status C<0> if the input file is already tidy, or C<1> if
-changes would be made.
-
-This option requires a single input file.
-
-=head2 --config
-
-Load default options from the specified JSON config file.
-
-If no explicit C<--config> is given, C<mojo-prettytidy> will
-auto-load C<.mojo-prettytidy.json> from the current working
-directory if that file exists.
-
-Command-line options override config values.
-
-=head2 --diff
-
-Print a minimal unified-style diff showing what would change, and exit
-with status C<0> if no changes are needed or C<1> if differences are
-found.
-
-This option requires a single input file.
-
-=head2 --output, -o
-
-Write the tidied result to the specified output file instead of standard
-output.
-
-This option cannot be combined with C<--write>, C<--check>, or C<--diff>.
-It is intended for single-input use.
-
-=head2 --prefix, --pre
-
-When writing multiple outputs, prefix generated filenames with the
-specified string.
-
-=head2 --outdir
-
-When writing multiple outputs, place generated files in the specified
-directory.
-
-=head2 --stdin
-
-Read input from standard input and write formatted output to standard
-output.
-
-=head2 --version, -v
-
-Print the program version and exit.
-
-=head2 --help, -h
-
-Show brief help.
-
-=head2 --man
-
-Show full documentation.
-
-=head1 CONFIG FILE
-
-Config files use JSON object syntax. Supported keys currently include:
-
-=over 4
-
-=item * C<indent_width>
-
-=item * C<tab_width>
-
-=item * C<prefix>
-
-=item * C<outdir>
-
-=back
-
-Example:
-
-    {
-      "prefix": "pt.",
-      "outdir": "share/samples/testing"
-    }
-
-=head1 DIRECTORY INPUT
-
-When a positional input is a directory, C<mojo-prettytidy> scans it
-non-recursively and processes matching C<.html.ep> files.
-
-When multiple input files are processed, use one of:
-
-=over 4
-
-=item * C<--write>
-
-Rewrite each file in place.
-
-=item * C<--prefix>
-
-Write sibling output files with prefixed names.
-
-=item * C<--outdir>
-
-Write generated files to the specified output directory.
-
-=back
-
-=head1 EXIT STATUS
-
-=over 4
-
-=item * C<0>
-
-Success, or no changes needed in C<--check> or C<--diff> mode.
-
-=item * C<1>
-
-Changes would be made in C<--check> mode, or differences were found in
-C<--diff> mode.
-
-=item * C<2>
-
-Command-line usage error.
-
-=back
-
-=head1 LICENSE
-
-Same terms as Perl itself.
-
-=head1 PROJECT HOME
-
-https://github.com/Harryb382003/PrettyTidy
-
-=cut

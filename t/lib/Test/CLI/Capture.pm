@@ -74,13 +74,14 @@ sub _slurp ( $path ) {
 1;
 
 __END__
-=pod
 
-=head1 NAME
+=head1 TEST HELPER: Test::CLI::Capture
+
+=head2 NAME
 
 Test::CLI::Capture - Core-only subprocess capture helper for tests
 
-=head1 SYNOPSIS
+=head2 SYNOPSIS
 
     use Test::CLI::Capture qw(run_cmd);
 
@@ -89,7 +90,7 @@ Test::CLI::Capture - Core-only subprocess capture helper for tests
       stdin => "alpha  \n",
     );
 
-=head1 DESCRIPTION
+=head2 DESCRIPTION
 
 This module provides a small core-only helper for running a subprocess
 in tests while capturing standard input, standard output, standard
@@ -98,16 +99,16 @@ error, and exit status.
 It uses temporary files and a fork/exec model to keep capture behavior
 simple and predictable.
 
-=head1 FUNCTIONS
+=head2 FUNCTIONS
 
-=head2 run_cmd
+=head3 run_cmd
 
     my $r = run_cmd(
       argv  => \@argv,
       stdin => $input,
     );
 
-Return a hash reference containing:
+Returns a hash reference containing:
 
 =over 4
 
@@ -124,9 +125,3 @@ Captured standard error.
 Process exit status.
 
 =back
-
-=head1 LICENSE
-
-Same terms as Perl itself.
-
-=cut
