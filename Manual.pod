@@ -498,6 +498,8 @@ Show effective option values after config and command-line processing.
 C<-V> shows active or behavior-changing options. C<-VV> shows all effective
 options, including defaults.
 
+Intended for development use.
+
 =head2 --version, -v
 
 Print the program version and exit.

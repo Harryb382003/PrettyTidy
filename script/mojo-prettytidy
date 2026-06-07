@@ -27,12 +27,10 @@ my %opt = (
             help         => 0,
             javascript   => 1,
             man          => 0,
-            maxchars     => 0,
             outdir       => '',
             output       => '',
             prefix       => '',
             show_options => 0,
-            sourceview   => 0,
             stdin        => 0,
             version      => 0,
             write        => 0, );
@@ -89,10 +87,6 @@ GetOptions(
     $opt{man}        = 1;
     $opt_source{man} = 'cli';
   },
-  'maxchars:i' => sub ( $name, $val ) {
-    $opt{maxchars}        = defined $val ? $val : 1;
-    $opt_source{maxchars} = 'cli';
-  },
   'output|o=s' => sub ( $name, $val ) {
     $opt{output}        = $val;
     $opt_source{output} = 'cli';
@@ -108,10 +102,6 @@ GetOptions(
 
   'show-options|V+' => \$opt{show_options},
 
-  'source|sourceview|source-view' => sub {
-    $opt{sourceview}        = 1;
-    $opt_source{sourceview} = 'cli';
-  },
   'stdin' => sub {
     $opt{stdin}        = 1;
     $opt_source{stdin} = 'cli';
@@ -146,9 +136,7 @@ if ( $opt_source{config} eq 'cli' ) {
   _validate_config( $cfg, $opt{config} );
 }
 
-for my $name (
-   qw(attributes javascript maxchars sourceview outdir prefix columns cleanup) )
-{
+for my $name ( qw(attributes javascript outdir prefix columns cleanup) ) {
   next unless exists $cfg->{$name};
   next unless $opt_source{$name} eq 'default';
 
@@ -203,21 +191,14 @@ pod2usage( "--stdin cannot be combined with --backup\n" )
 pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
     if $opt{stdin} && @inputs;
 
-pod2usage( "--maxchars requires --source-view\n" )
-    if $opt{maxchars} && !$opt{sourceview};
-
 my $pt = Mojo::PrettyTidy->new(
-                       attributes => $opt{attributes} ? 1 : 0,
-                       cleanup    => $opt{cleanup}    ? 1 : 0,
-                       columns    => $opt{columns} || 0,
-                       javascript => $opt{javascript} ? 1 : 0,
-                       ( $opt{maxchars} ? ( maxchars => $opt{maxchars} ) : () ),
-                       ( $opt{sourceview} ? ( sourceview => 1 )          : () ),
-);
+                                attributes => $opt{attributes} ? 1 : 0,
+                                cleanup    => $opt{cleanup}    ? 1 : 0,
+                                columns    => $opt{columns} || 0,
+                                javascript => $opt{javascript} ? 1 : 0, );
 
 if ( $opt{stdin} ) {
   my $input = do { local $/; <STDIN> };
-  _warn_long_lines( $input, 'STDIN', $opt{sourceview} ) if !$opt{maxchars};
   $pt->ep_source_file( 'stdin' );
   my $output = $pt->tidy( $input );
 
@@ -262,7 +243,6 @@ _ensure_outdir( $opt{outdir} ) if length $opt{outdir};
 if ( @files == 1 && !length( $opt{prefix} ) && !length( $opt{outdir} ) ) {
   my $file  = $files[0];
   my $input = _slurp( $file );
-  _warn_long_lines( $input, $file, $opt{sourceview} ) if !$opt{maxchars};
 
   $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
@@ -308,7 +288,6 @@ if ( @files == 1 && !length( $opt{prefix} ) && !length( $opt{outdir} ) ) {
 # multi-file / directory mode
 for my $file ( @files ) {
   my $input = _slurp( $file );
-  _warn_long_lines( $input, $file, $opt{sourceview} ) if !$opt{maxchars};
   $pt->ep_source_file( $file );
   my $output = $pt->tidy( $input );
 
@@ -464,60 +443,11 @@ sub _validate_config ( $cfg, $path ) {
       attributes
       javascript
       cleanup
-      maxchars
-      sourceview
   );
 
   for my $k ( keys %$cfg ) {
     die "Unknown config key '$k' in '$path'\n"
         unless $allowed{$k};
-  }
-
-  if ( exists $cfg->{sourceview} ) {
-    my $v = $cfg->{sourceview};
-
-    die
-"Config key 'sourceview' in '$path' must be boolean or a positive integer\n"
-        if ref( $v ) eq 'HASH' || ref( $v ) eq 'ARRAY';
-
-    die
-"Config key 'sourceview' in '$path' must be boolean or a positive integer\n"
-        unless ref( $v ) || $v =~ /\A(?:0|1|[1-9][0-9]*)\z/;
-  }
-
-  if ( exists $cfg->{maxchars} ) {
-    my $v = $cfg->{maxchars};
-
-    die
-"Config key 'maxchars' in '$path' must be boolean or a positive integer\n"
-        if ref( $v ) eq 'HASH' || ref( $v ) eq 'ARRAY';
-
-    die
-"Config key 'maxchars' in '$path' must be boolean or a positive integer\n"
-        unless ref( $v ) || $v =~ /\A(?:0|1|[1-9][0-9]*)\z/;
-  }
-}
-
-sub _warn_long_lines ( $text, $label = '', $sourceview = 0 ) {
-  return unless defined $text && length $text;
-
-  my $warn_threshold = 10000;
-
-  for my $line ( split /\n/, $text, -1 ) {
-    next unless length( $line ) > $warn_threshold;
-
-    my $where = length( $label ) ? " in '$label'" : '';
-
-    if ( $sourceview ) {
-      warn
-"input$where contains very long lines; consider --source-view --maxchars or
---source-view --maxchars N for readability\n";
-    } else {
-      warn "input$where contains very long lines and may be machine-generated or
-editor-hostile\n";
-    }
-
-    last;
   }
 }
 
