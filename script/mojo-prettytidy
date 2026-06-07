@@ -22,16 +22,19 @@ my %opt = (
             check        => 0,
             cleanup      => 0,
             columns      => 80,
-            config       => '.mojo-prettytidy.json',
+            config       => '',
             diff         => 0,
             help         => 0,
+            indent_width => 2,
             javascript   => 1,
             man          => 0,
             outdir       => '',
             output       => '',
+            perl         => 1,
             prefix       => '',
             show_options => 0,
             stdin        => 0,
+            tab_width    => 2,
             version      => 0,
             write        => 0, );
 
@@ -95,6 +98,10 @@ GetOptions(
     $opt{outdir}        = $val;
     $opt_source{outdir} = 'cli';
   },
+  'perl!' => sub ( $name, $val ) {
+    $opt{perl}        = $val ? 1 : 0;
+    $opt_source{perl} = 'cli';
+  },
   'prefix|pre=s' => sub ( $name, $val ) {
     $opt{prefix}        = $val;
     $opt_source{prefix} = 'cli';
@@ -127,16 +134,24 @@ if ( $opt{version} ) {
 my @inputs = @ARGV;
 
 my $cfg = {};
+my $cfg = {};
 
 if ( $opt_source{config} eq 'cli' ) {
   $cfg = _load_config_file( $opt{config} );
   _validate_config( $cfg, $opt{config} );
-} elsif ( -f $opt{config} ) {
-  $cfg = _load_config_file( $opt{config} );
-  _validate_config( $cfg, $opt{config} );
+} else {
+  my $config_path = _find_default_config_file();
+
+  if ( length $config_path ) {
+    $opt{config}        = $config_path;
+    $opt_source{config} = 'auto';
+
+    $cfg = _load_config_file( $config_path );
+    _validate_config( $cfg, $config_path );
+  }
 }
 
-for my $name ( qw(attributes javascript outdir prefix columns cleanup) ) {
+for my $name ( qw(attributes cleanup columns javascript outdir perl prefix ) ) {
   next unless exists $cfg->{$name};
   next unless $opt_source{$name} eq 'default';
 
@@ -192,10 +207,12 @@ pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
     if $opt{stdin} && @inputs;
 
 my $pt = Mojo::PrettyTidy->new(
-                                attributes => $opt{attributes} ? 1 : 0,
-                                cleanup    => $opt{cleanup}    ? 1 : 0,
-                                columns    => $opt{columns} || 0,
-                                javascript => $opt{javascript} ? 1 : 0, );
+                                attributes   => $opt{attributes} ? 1 : 0,
+                                cleanup      => $opt{cleanup}    ? 1 : 0,
+                                columns      => $opt{columns} || 0,
+                                indent_width => $opt{indent_width},
+                                javascript   => $opt{javascript} ? 1 : 0,
+                                tab_width    => $opt{tab_width}, );
 
 if ( $opt{stdin} ) {
   my $input = do { local $/; <STDIN> };
@@ -355,6 +372,23 @@ sub _is_template_file ( $path ) {
   return $path =~ /\.html\.ep\z/ ? 1 : 0;
 }
 
+sub _find_default_config_file () {
+  my @candidates;
+
+  if ( defined $ENV{HOME} && length $ENV{HOME} ) {
+    push @candidates,
+        File::Spec->catfile( $ENV{HOME}, '.mojo-prettytidy.json' );
+  }
+
+  push @candidates, File::Spec->catfile( '.', '.mojo-prettytidy.json' );
+
+  for my $path ( @candidates ) {
+    return $path if -f $path;
+  }
+
+  return '';
+}
+
 sub _load_config_file ( $path ) {
   open my $fh, '<', $path or die "Cannot open config '$path' for reading: $!";
   local $/;
@@ -435,14 +469,15 @@ sub _spew ( $path, $content ) {
 
 sub _validate_config ( $cfg, $path ) {
   my %allowed = map { $_ => 1 } qw(
-      indent_width
-      tab_width
-      prefix
-      outdir
-      columns
       attributes
-      javascript
       cleanup
+      columns
+      indent_width
+      javascript
+      outdir
+      prefix
+      perl
+      tab_width
   );
 
   for my $k ( keys %$cfg ) {

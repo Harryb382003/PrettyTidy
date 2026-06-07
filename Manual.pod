@@ -394,9 +394,11 @@ kept and no reformatting warning comment is injected.
 
 =head1 COMMAND-LINE OPTIONS
 
-=head2 --write, -w
+=head2 --attributes, --attrib, -a
 
-Rewrite input files in place.
+Enable attribute formatting. This is enabled by default.
+
+Use C<--no-attributes> or C<--no-attrib> to disable attribute formatting.
 
 =head2 --backup
 
@@ -414,6 +416,17 @@ Exit with status C<0> if the input file is already tidy, or C<1> if changes
 would be made.
 
 This option requires a single input file.
+
+=head2 --cleanup
+
+Enable additional cleanup passes.
+
+=head2 --columns, --cols, -c
+
+Set the target column width for conservative width-aware formatting. The
+default is C<80>.
+
+Use C<--no-columns> or C<--no-cols> to disable column-aware formatting.
 
 =head2 --config
 
@@ -444,42 +457,9 @@ C<0> if no changes would occur or C<1> if differences are found.
 
 This option requires a single input file.
 
-=head2 --output, -o
+=head2 --help, -h
 
-Write the tidied result to the specified output file instead of standard
-output.
-
-This option cannot be combined with C<--write>, C<--check>, or C<--diff>. It
-is intended for single-input use.
-
-=head2 --prefix, --pre
-
-When writing multiple outputs, prefix generated filenames with the specified
-string.
-
-=head2 --outdir
-
-When writing multiple outputs, place generated files in the specified
-directory.
-
-=head2 --stdin
-
-Read template input from standard input and write formatted output to standard
-output. This is useful when piping data to C<mojo-prettytidy> from an editor,
-shell command, or another program.
-
-=head2 --columns, --cols, -c
-
-Set the target column width for conservative width-aware formatting. The
-default is C<80>.
-
-Use C<--no-columns> or C<--no-cols> to disable column-aware formatting.
-
-=head2 --attributes, --attrib, -a
-
-Enable attribute formatting. This is enabled by default.
-
-Use C<--no-attributes> or C<--no-attrib> to disable attribute formatting.
+Show brief help.
 
 =head2 --javascript, --js, -j
 
@@ -487,9 +467,33 @@ Enable JavaScript formatting. This is enabled by default.
 
 Use C<--no-javascript> or C<--no-js> to disable JavaScript formatting.
 
-=head2 --cleanup
+=head2 --man
 
-Enable additional cleanup passes.
+Show full documentation.
+
+=head2 --output, -o
+
+Write the tidied result to the specified output file instead of standard
+output.
+
+This option cannot be combined with C<--write>, C<--check>, or C<--diff>. It
+is intended for single-input use.
+=head2 --outdir
+
+When writing multiple outputs, place generated files in the specified
+directory.
+
+=head2 --prefix, --pre
+
+When writing multiple outputs, prefix generated filenames with the specified
+string.
+
+
+=head2 --stdin
+
+Read template input from standard input and write formatted output to standard
+output. This is useful when piping data to C<mojo-prettytidy> from an editor,
+shell command, or another program.
 
 =head2 --show-options, -V, -VV
 
@@ -504,13 +508,9 @@ Intended for development use.
 
 Print the program version and exit.
 
-=head2 --help, -h
+=head2 --write, -w
 
-Show brief help.
-
-=head2 --man
-
-Show full documentation.
+Rewrite input files in place.
 
 =head1 CONFIG FILE
 

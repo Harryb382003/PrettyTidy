@@ -14,13 +14,14 @@ our $VERSION = '0.01';
 
 sub new ( $class, %args ) {
   my $self = bless {
-          indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
-          tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
-          columns      => defined $args{columns}      ? $args{columns}    : 80,
           attributes   => defined $args{attributes}   ? $args{attributes} : 1,
-          javascript   => defined $args{javascript}   ? $args{javascript} : 1,
-          maxchars     => defined $args{maxchars}     ? $args{maxchars}   : 0,
-          sourceview   => defined $args{sourceview}   ? $args{sourceview} : 0,
+          columns      => defined $args{columns}      ? $args{columns}    : 80,
+          indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
+          javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
+          maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
+          perl         => defined $args{perl}         ? $args{perl}         : 1,
+          sourceview   => defined $args{sourceview}   ? $args{sourceview}   : 0,
+          tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
   }, $class;
 
   return $self;
@@ -1635,6 +1636,10 @@ sub _pt_run ( $self, $perl, $idx = 1 ) {
   # if fail, write debug file and rerun file-mode for .ERR/.LOG
   # return original $perl
   return '' unless defined $perl && length $perl;
+
+  if ( !$self->{perl} ) {
+    return ( 0, $perl );
+  }
 
   require IPC::Open3;
   require IO::Select;
