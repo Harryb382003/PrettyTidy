@@ -488,13 +488,6 @@ directory.
 When writing multiple outputs, prefix generated filenames with the specified
 string.
 
-
-=head2 --stdin
-
-Read template input from standard input and write formatted output to standard
-output. This is useful when piping data to C<mojo-prettytidy> from an editor,
-shell command, or another program.
-
 =head2 --show-options, -V, -VV
 
 Show effective option values after config and command-line processing.
@@ -503,6 +496,12 @@ C<-V> shows active or behavior-changing options. C<-VV> shows all effective
 options, including defaults.
 
 Intended for development use.
+
+=head2 --stdin
+
+Read template input from standard input and write formatted output to standard
+output. This is useful when piping data to C<mojo-prettytidy> from an editor,
+shell command, or another program.
 
 =head2 --version, -v
 
