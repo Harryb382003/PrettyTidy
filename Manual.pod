@@ -483,6 +483,13 @@ is intended for single-input use.
 When writing multiple outputs, place generated files in the specified
 directory.
 
+=head2 --perl / --no-perl
+
+Enable or disable C<perltidy> formatting for Embedded Perl/code regions.
+Enabled by default. When disabled, PrettyTidy still applies its template,
+HTML, attribute, JavaScript, and column-handling passes as configured, but it
+does not run C<perltidy> over Embedded Perl regions.
+
 =head2 --prefix, --pre
 
 When writing multiple outputs, prefix generated filenames with the specified
