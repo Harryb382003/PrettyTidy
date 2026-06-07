@@ -18,9 +18,7 @@ sub new ( $class, %args ) {
           columns      => defined $args{columns}      ? $args{columns}    : 80,
           indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
           javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
-          maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
           perl         => defined $args{perl}         ? $args{perl}         : 1,
-          sourceview   => defined $args{sourceview}   ? $args{sourceview}   : 0,
           tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
   }, $class;
 
@@ -54,6 +52,22 @@ sub _chunk ( $self, $text ) {
   }
 
   return @chunks;
+}
+
+sub _cleanup_runtime_artifacts ( $self ) {
+  my @files = glob File::Spec->catfile( 'tmp', 'pt.raw-perltidy.out' );
+  push @files, glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl' );
+  push @files,
+      glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.LOG' );
+  push @files,
+      glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.ERR' );
+
+  for my $file ( @files ) {
+    next unless -e $file;
+    unlink $file or warn "Could not remove $file: $!";
+  }
+
+  return;
 }
 
 sub _cols_attrib_split_style_declarations ( $style ) {
@@ -1702,10 +1716,10 @@ sub _pt_run ( $self, $perl, $idx = 1 ) {
   waitpid $pid, 0;
   my $status = $? >> 8;
 
-  open my $dbg, '>>', './tmp/pt.raw-perltidy.out'
-      or die "Cannot write ./tmp/pt.raw-perltidy.out: $!";
-  print {$dbg} $tidied;
-  close $dbg;
+  #   open my $dbg, '>>', './tmp/pt.raw-perltidy.out'
+  #       or die "Cannot write ./tmp/pt.raw-perltidy.out: $!";
+  #   print {$dbg} $tidied;
+  #   close $dbg;
 
   return ( 1, $tidied ) if $status == 0 && length $tidied;
 
@@ -1926,6 +1940,7 @@ sub _separate_blocks ( $self, $text ) {
 }
 
 sub tidy ( $self, $input ) {
+  $self->_cleanup_runtime_artifacts() if $self->{cleanup};
   my $text = defined $input ? $input : '';
   my $flat = $self->_flatten( $text );
 
