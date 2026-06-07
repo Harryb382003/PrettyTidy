@@ -16,11 +16,11 @@ sub new ( $class, %args ) {
   my $self = bless {
           indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
           tab_width    => defined $args{tab_width}    ? $args{tab_width}    : 2,
-          columns      => defined $args{columns}      ? $args{columns}      : 0,
-          attributes   => defined $args{attributes}   ? $args{attributes}   : 1,
-          javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
-          maxchars     => defined $args{maxchars}     ? $args{maxchars}     : 0,
-          sourceview   => defined $args{sourceview}   ? $args{sourceview}   : 0,
+          columns      => defined $args{columns}      ? $args{columns}    : 80,
+          attributes   => defined $args{attributes}   ? $args{attributes} : 1,
+          javascript   => defined $args{javascript}   ? $args{javascript} : 1,
+          maxchars     => defined $args{maxchars}     ? $args{maxchars}   : 0,
+          sourceview   => defined $args{sourceview}   ? $args{sourceview} : 0,
   }, $class;
 
   return $self;
@@ -53,6 +53,146 @@ sub _chunk ( $self, $text ) {
   }
 
   return @chunks;
+}
+
+sub _cols_attrib_split_style_declarations ( $style ) {
+  return () unless defined $style && length $style;
+
+  my @parts = split /;/, $style;
+  @parts = map {
+    my $x = $_;
+    $x =~ s/^\s+//;
+    $x =~ s/\s+$//;
+    $x =~ s/\s+/ /g;
+    $x;
+  } @parts;
+
+  @parts = grep { length $_ } @parts;
+  @parts = map  { $_ . ';' } @parts;
+
+  return @parts;
+}
+
+sub _cols_line_exceeds_columns ( $self, $line ) {
+  return 0 unless defined $self->{columns} && $self->{columns};
+  return length( $line ) > $self->{columns} ? 1 : 0;
+}
+
+sub _cols_style_attributes ( $self, $text ) {
+  return ''    unless defined $text            && length $text;
+  return $text unless defined $self->{columns} && $self->{columns};
+
+  my @out;
+
+  for my $line ( split /\n/, $text, -1 ) {
+    if ( !$self->_cols_line_exceeds_columns( $line ) ) {
+      push @out, $line;
+      next;
+    }
+
+    if ( $line !~ /^([ \t]*)(.*?\bstyle=")([^"]*)(".*)\z/ ) {
+      push @out, $line;
+      next;
+    }
+
+    my ( $indent, $before, $style, $after ) = ( $1, $2, $3, $4 );
+    my @decls = _cols_attrib_split_style_declarations( $style );
+
+    if ( @decls <= 1 ) {
+      push @out, $line;
+      next;
+    }
+
+    push @out,
+        $self->_cols_wrap_style_declarations( $indent, $before, \@decls,
+                                              $after, );
+  }
+
+  return join "\n", @out;
+}
+
+sub _cols_wrap_style_declarations ( $self, $indent, $before, $decls, $after ) {
+  my $cols = $self->{columns} || 0;
+
+  my @decls = @$decls;
+  return ( $indent . $before . join( ' ', @decls ) . $after ) unless $cols > 0;
+  return ( $indent . $before . $after )                       unless @decls;
+
+  my $first_prefix = $indent . $before;
+
+  my $cont_prefix;
+  if ( $before =~ /^(.style=")\z/ ) {
+    $cont_prefix = $indent . $1 . ( ' ' x $self->{indent_width} );
+  } else {
+    $cont_prefix = ' ' x length( $first_prefix );
+  }
+
+  my @lines;
+  my @cur;
+  my $cur_prefix = $first_prefix;
+
+  while ( @decls ) {
+    my $decl = shift @decls;
+
+    my @candidate_decls = ( @cur, $decl );
+    my $candidate =
+        $cur_prefix . join( ' ', @candidate_decls ) . ( @decls ? '' : $after );
+
+    if ( length( $candidate ) <= $cols ) {
+      @cur = @candidate_decls;
+      next;
+    }
+
+    if ( @cur ) {
+      push @lines, [ $cur_prefix, [@cur] ];
+      @cur        = ( $decl );
+      $cur_prefix = $cont_prefix;
+      next;
+    }
+
+    push @lines, [ $cur_prefix, [$decl] ];
+    @cur        = ();
+    $cur_prefix = $cont_prefix;
+  }
+
+  push @lines, [ $cur_prefix, [@cur] ] if @cur;
+
+  if ( @lines >= 2 ) {
+    my $prev = $lines[-2];
+    my $last = $lines[-1];
+
+    my @prev_decls = @{$prev->[1]};
+    my @last_decls = @{$last->[1]};
+
+    if ( @prev_decls > 1 ) {
+      my $moved          = pop @prev_decls;
+      my @new_last_decls = ( $moved, @last_decls );
+
+      my $new_prev_text = $prev->[0] . join( ' ', @prev_decls );
+      my $new_last_text = $last->[0] . join( ' ', @new_last_decls ) . $after;
+
+      my $old_prev_text = $prev->[0] . join( ' ', @{$prev->[1]} );
+      my $old_last_text = $last->[0] . join( ' ', @{$last->[1]} ) . $after;
+
+      if (    length( $new_prev_text ) <= $cols
+           && length( $new_last_text ) <= $cols
+           && length( $old_last_text ) < int( length( $old_prev_text ) / 3 ) )
+      {
+        $prev->[1] = \@prev_decls;
+        $last->[1] = \@new_last_decls;
+      }
+    }
+  }
+
+  my @out;
+  for my $i ( 0 .. $#lines ) {
+    my ( $prefix, $chunks ) = @{$lines[$i]};
+    my $text = $prefix . join( ' ', @$chunks );
+    $text .= $after if $i == $#lines;
+    push @out, $text;
+  }
+
+  return @out;
 }
 
 sub _ep_early_breakpoints ( $self, $text ) {
@@ -1081,6 +1221,7 @@ sub _js_format_text ( $self, $js, $matched = undef ) {
   return $original unless defined $formatted && length $formatted;
 
   $formatted = $self->_js_postfix_munges( $js, $formatted );
+  $formatted = $self->_js_postfix_ternary_assignments( $formatted );
 
   if ( $self->_js_formatter_munged( $js, $formatted, $matched ) ) {
     return $original;
@@ -1154,8 +1295,30 @@ m{//[^\n]*[A-Za-z0-9_\)](?:document\.|window\.|console\.|const\s+|let\s+|var\s+|
   return 1;
 }
 
+sub _js_postfix_ternary_assignments ( $self, $js ) {
+  return '' unless defined $js && length $js;
+
+  my $indent = ' ' x $self->{indent_width};
+
+  $js =~ s{
+    ^
+    ([ \t]*)
+    ([^\n;]*?\.textContent)
+    [ \t]*
+    =
+    [ \t]*
+    ([^\n;]*\?[^\n;]*:[^\n;]*;)
+  }{
+    "$1$2 =\n$1$indent$3"
+  }gmex;
+
+  return $js;
+}
+
 sub _js_prebake ( $self, $js ) {
   return '' unless defined $js && length $js;
+
+  my $indent = ' ' x $self->{indent_width};
 
 # If flattening glued code/comment boundaries together, restore line-comment shape.
   $js =~ s{;\s*(?=//)}{;\n}g;
@@ -1188,6 +1351,29 @@ sub _js_prebake ( $self, $js ) {
   )
 }{$1\n}gx;
 
+  # Flattening can glue a line comment to following code on the same line.
+  # Split before likely statement starts even when the comment has normal text
+  # immediately before the code keyword.
+  $js =~ s{
+    (//[^\n]*?)
+    [ \t]+
+    (
+        (?:const|let|var)\s+
+      | (?:document|window|console)\.
+      | [A-Za-z_\$][A-Za-z0-9_\$]*\.
+      | if\s*\(
+      | for\s*\(
+      | while\s*\(
+      | switch\s*\(
+      | return\b
+      | async\s+function\s+
+      | function\s+
+      | class\s+
+      | new\s+
+      | await\s+
+    )
+  }{$1\n$2}gx;
+
   # Flattening can also glue a line comment to a block transition.
   # Example:
   #   // comment} else {
@@ -1205,6 +1391,7 @@ sub _js_prebake ( $self, $js ) {
   $js =~ s{;\s*(?=(?:const|let|var)\s+)}{;\n}g;
   $js =~ s{;\s*(?=(?:if|for|while|switch|try|catch|finally)\b)}{;\n}g;
   $js =~ s{;\s*(?=(?:async\s+function|function|class)\s+)}{;\n}g;
+  $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
   $js =~ s{;\s*(?=(?:document|window|console)\.)}{;\n}g;
   $js =~ s{;\s*(?=return\b)}{;\n}g;
 
@@ -1747,20 +1934,21 @@ sub tidy ( $self, $input ) {
 
   $out = $self->_html_baseline_indentation( $out );
 
-  $self->_debug_brand_block( 'baseline 1', $out );
-
   if ( $self->{attributes} ) {
     $out = $self->_html_attrib_container( $out );
     $out = $self->_html_attrib_solo( $out );
     $out = $self->_html_attrib_option( $out );
     $out = $self->_html_attrib_paired( $out );
-    $out = $self->_html_baseline_indentation( $out );    # yes, again
+
+    #     $out = $self->_html_baseline_indentation( $out );    # yes, again
+  }
+  if ( $self->{columns} ) {
+
+    $out = $self->_cols_style_attributes( $out );
+    $out = $self->_html_baseline_indentation( $out );
   }
 
-  #   $out = $self->_html_postfix_label_closers( $out );
-
   $out = $self->_separate_blocks( $out );
-
   $out = $self->_remove_extra_newlines( $out );
 
   return $out;
@@ -1768,121 +1956,3 @@ sub tidy ( $self, $input ) {
 
 1;
 
-sub _debug_brand_block ( $self, $label, $text ) {
-  return unless defined $text;
-  my $debug_brand = 0;
-  if ( $text =~ /(<a\b[^>]*mojolicious\.org[\s\S]*?<button\b)/ ) {
-    my $slice = $1;
-    $slice =~ s/ /·/g;
-    $slice =~ s/\n/⏎\n/g;
-
-    warn
-"\n--- $label brand block ---\n$slice\n--- end $label brand block ---\n";
-  }
-
-  return;
-}
-
-# sub _html_postfix_label_closers ( $self, $text ) {
-#   return '' unless defined $text && length $text;
-#
-#   my @out;
-#   my @label_indent;
-#
-#   for my $line ( split /\n/, $text, -1 ) {
-#     if ( $line =~ /^([ \t]*)<label\b/i ) {
-#       push @label_indent, $1;
-#       push @out,          $line;
-#       next;
-#     }
-#
-#     if ( $line =~ /^[ \t]*<\/label>/i && @label_indent ) {
-#       my $indent = pop @label_indent;
-#       $line =~ s/^[ \t]*/$indent/;
-#       push @out, $line;
-#       next;
-#     }
-#
-#     push @out, $line;
-#   }
-#
-#   return join "\n", @out;
-# }
-
-#
-# sub _debug_button_slice ( $self, $label, $text ) {
-#   return unless defined $text;
-#
-#   my $idx = 0;
-#
-#   while ( $text =~ /(<button\b[\s\S]*?<\/button>)/g ) {
-#     $idx++;
-#
-#     my $slice = $1;
-#     $slice =~ s/ /·/g;
-#     $slice =~ s/\n/⏎\n/g;
-#
-#     warn
-# "\n--- $label button#$idx ---\n$slice\n--- end $label button#$idx ---\n";
-#   }
-#
-#   return;
-# }
-
-#   # Preserve rendered word spacing around inline paired tags before later
-#   # breakpoint rules split them across lines.
-#   my @inline_pair_spacing_tags = qw(a b);
-#   my $inline_pair_spacing_tag  = join '|', @inline_pair_spacing_tags;
-#   my $inline_pair_body         = qr{(?:(?:<%[\s\S]*?%>)|[^<\n])*};
-#
-#   # word <a ...>text</a>  -> word&nbsp;<a ...>text</a>
-#   # word <b ...>text</b>  -> word&nbsp;<b ...>text</b>
-#   $text =~ s{
-#     ([A-Za-z0-9])
-#     [ \t]+
-#     (?=<(?:$inline_pair_spacing_tag)\b)
-#   }{
-#     "$1&nbsp;"
-#   }gexi;
-#
-#   # </a> word  -> </a>&nbsp;word
-#   # </b> word  -> </b>&nbsp;word
-#   #
-#   # Do not fire before punctuation; punctuation should stay attached.
-#   $text =~ s{
-#     (</(?:$inline_pair_spacing_tag)>)
-#     [ \t]+
-#     (?=[A-Za-z0-9])
-#   }{
-#     "$1&nbsp;"
-#   }gexi;
-#
-#   # <b> glued directly after a tag close or formatter-preserved &nbsp;
-#   # gets its own line.
-#   $text =~ s{
-#     (
-#         >
-#       | &nbsp;
-#     )
-#     [ \t]*
-#     (<b\b[^>]*>)
-#     ($inline_pair_body)
-#     (</b>)
-#   }{
-#     "$1\n$2$3$4"
-#   }gexi;
-#
-#   # Inline paired tag followed by formatter-preserved &nbsp; or word-space
-#   # gets its following word text moved to the next line.
-#   $text =~ s{
-#     (<(?:$inline_pair_spacing_tag)\b[^>]*>)
-#     ($inline_pair_body)
-#     (</(?:$inline_pair_spacing_tag)>)
-#     (
-#         &nbsp;
-#       | [ \t]+
-#     )
-#     (?=[A-Za-z0-9])
-#   }{
-#     "$1$2$3$4\n"
-#   }gexi;
