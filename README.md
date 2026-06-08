@@ -1,274 +1,117 @@
-# Mojo-PrettyTidy
+# Mojo::PrettyTidy
 
-Mojo::PrettyTidy is a conservative tidy tool for Mojolicious Embedded Perl templates, especially `.html.ep` files.
+Mojo::PrettyTidy is a conservative formatter for Mojolicious Embedded Perl
+templates, especially `.html.ep` files.
 
-The initial focus is safe normalization and conservative indentation rather than aggressive formatting. Early versions 
-aim to preserve template semantics while performing low-risk cleanup.
+It focuses on making template source easier to read without trying to become a
+general-purpose HTML formatter, JavaScript formatter, or browser-source cleanup
+tool.
 
-## Status
+## Scope
 
-Early development, but already useful for real-world inspection and iterative cleanup.
+This tool formats Mojolicious template source that is intended to be rendered by
+a Mojolicious application.
 
-## Goals
+It is not intended for downloaded browser source, saved web pages, scraper
+output, or other already-rendered HTML documents. You can try that if you really
+want to, but that monkey is not a member of this circus.
 
-- preserve Mojolicious template semantics
-- normalize whitespace conservatively
-- improve readability of `.html.ep` templates
-- support command-line and editor-driven use
-- remain safe and predictable
+## Install
 
-## Non-goals for early versions
+From the project root:
 
-- full HTML reformatting
-- rewriting Perl expressions
-- reflowing prose
-- prettifying JavaScript
-- magically handling every edge case on day one
-
-## Installation
-
-Development install from the repo:
-
-perl Makefile.PL  
-make  
-make test  
+```sh
+perl Makefile.PL
+make
+make test
 make install
+```
 
-## Command-line usage
+## Basic use
 
-Single-file usage:
+Print formatted output to standard output:
 
-mojo-prettytidy file.html.ep  
-mojo-prettytidy --config path/to/config.json file.html.ep  
-mojo-prettytidy --output parsed.file.html.ep file.html.ep  
-mojo-prettytidy --check file.html.ep  
-mojo-prettytidy --diff file.html.ep  
-mojo-prettytidy --write file.html.ep  
-mojo-prettytidy --write --backup file.html.ep  
-mojo-prettytidy --write --backup --backup-ext=.orig file.html.ep  
-mojo-prettytidy --stdin < file.html.ep  
-mojo-prettytidy --version
+```sh
+mojo-prettytidy templates/example.html.ep
+```
 
-Multiple-file usage:
+Check whether a file would change:
 
-mojo-prettytidy file1.html.ep file2.html.ep --prefix pt.  
-mojo-prettytidy file1.html.ep file2.html.ep --prefix pt. --outdir parsed
+```sh
+mojo-prettytidy --check templates/example.html.ep
+```
 
-Directory usage:
+Write changes back to the file:
 
-mojo-prettytidy templates --prefix pt. --outdir parsed
+```sh
+mojo-prettytidy --write templates/example.html.ep
+```
+
+Read from standard input and write to standard output:
+
+```sh
+cat templates/example.html.ep | mojo-prettytidy --stdin
+```
+
+## Common options
+
+```sh
+mojo-prettytidy --diff templates/example.html.ep
+mojo-prettytidy --write --backup templates/example.html.ep
+mojo-prettytidy --cols 80 templates/example.html.ep
+mojo-prettytidy --no-javascript templates/example.html.ep
+mojo-prettytidy --no-perl templates/example.html.ep
+mojo-prettytidy -V templates/example.html.ep
+mojo-prettytidy -VV templates/example.html.ep
+```
+
+`--cols` is conservative. It currently packs long `style="..."` attributes; it
+does not hard-wrap arbitrary prose, Perl expressions, JavaScript, or quoted
+payloads.
 
 ## Configuration
 
-If present, `.mojo-prettytidy.json` in the current working directory is loaded automatically.
+`mojo-prettytidy` can load defaults from a JSON config file.
 
-An explicit config file may also be supplied with:
+If `--config` is not given, it looks for the first available file in this order:
 
-mojo-prettytidy --config path/to/config.json file.html.ep
+1. `$HOME/.mojo-prettytidy.json`
+2. `./.mojo-prettytidy.json`
 
 Command-line options override config values.
 
-Example:
+## Documentation
 
-json
+The full manual is maintained in:
 
-{
-  "prefix": "pt.",
-  "outdir": "share/samples/testing"
-}
+```text
+Manual.pod
+```
 
-Supported keys currently include:
-	•	indent_width
-	•	tab_width
-	•	prefix
-	•	outdir
+After installation, use:
 
-Multi-file and directory behavior
+```sh
+perldoc Mojo::PrettyTidy::Manual
+```
 
-Positional inputs may be files or directories.
+The command-line help remains available through:
 
-When a positional input is a directory, mojo-prettytidy scans it non-recursively and processes matching .html.ep files.
+```sh
+mojo-prettytidy --help
+mojo-prettytidy --man
+```
 
-When multiple files are processed, use one of:
-	•	--write to rewrite files in place
-	•	--prefix to write sibling output files with prefixed names
-	•	--outdir to write generated files to an output directory
+## Development
 
-Examples:
+Run the test suite with:
 
-mojo-prettytidy templates –prefix pt.
-mojo-prettytidy templates –prefix pt. –outdir parsed
+```sh
+prove -lv t
+```
 
-This produces files such as:
+The formatter is intentionally conservative. New behavior should generally be
+covered by focused tests before it becomes part of the default output policy.
 
-pt.filename.html.ep
-parsed/pt.filename.html.ep
+## License
 
-Option notes
-	•	--output is intended for single-file output to a specific file
-	•	--write cannot be combined with --output, --prefix, or --outdir
-	•	--check and --diff require a single input file
-	•	multiple inputs require --write, --prefix, or --outdir
-
-Kate / editor usage
-
-The tool is designed to work cleanly as an editor-invoked command, similar in spirit to perltidy.
-
-Typical patterns:
-
-script/mojo-prettytidy %filename
-
-or:
-
-script/mojo-prettytidy –stdin
-
-For non-destructive inspection of generated output, --output, --prefix, and --outdir are often more useful than --diff.
-
-Current behavior
-
-Current versions perform conservative cleanup:
-	•	normalize line endings to LF
-	•	remove trailing horizontal whitespace
-	•	ensure exactly one trailing newline at end of file
-	•	apply conservative indentation to safe HTML structure
-	•	indent plain text lines inside safe HTML structure
-	•	preserve Embedded Perl structure conservatively
-	•	indent HTML lines containing Embedded Perl markers conservatively
-	•	indent Embedded Perl control lines locally inside surrounding HTML blocks
-	•	indent embedded percent-code lines locally inside surrounding HTML blocks
-	•	handle single-line and multiline HTML comments conservatively
-	•	treat <script> and <style> blocks as protected regions
-	•	handle multiline opening tags conservatively
-	•	handle multiline inline style="..." attributes conservatively
-
-Design notes:
-
-Mojo::PrettyTidy currently favors local readability over aggressive transformation.
-
-In particular, it is intentionally conservative around:
-	•	Embedded Perl control flow
-	•	mixed HTML and Embedded Perl lines
-	•	script and style blocks
-	•	multiline inline attributes
-	•	multiline opening tags
-	
-JavaScript handler:
-
-PrettyTidy contains a conservative JavaScript handler for inline <script> blocks in 
-Mojolicious .html.ep templates.
-
-The goal is not for PrettyTidy itself to become a JavaScript formatter. Instead, 
-PrettyTidy treats JavaScript as a language island inside the template:
-
-1. detect inline <script> ... </script> blocks
-2. separate the script block cleanly from surrounding EP/HTML
-3. format the JavaScript body with JavaScript::Beautifier
-4. repair a small set of known modern-JavaScript token splits
-5. verify that known dangerous munges did not survive
-6. reinsert the script body into the template
-
-External scripts such as:
-
-<script src="/app.js"></script>
-
-are not JavaScript-formatted, because there is no inline body to format.
-
-Why this exists
-
-Mojolicious templates often contain small inline JavaScript blocks. When those 
-blocks are flattened into surrounding HTML/EP code, they can become difficult to 
-read:
-
-<script>'use strict';let current = '#context';function example(){...}</script>
-
-PrettyTidy attempts to make these blocks readable while keeping the rest of the 
-template formatter conservative.
-
-JavaScript::Beautifier
-
-PrettyTidy currently uses JavaScript::Beautifier, which keeps the implementation 
-Perl-native and avoids requiring Node, npm, npx, local node_modules, or 
-editor-specific PATH setup.
-
-The beautifier is called with PrettyTidy’s configured indentation width, so 
-JavaScript indentation follows the same internal indentation size as the rest of the 
-formatter.
-
-Modern JavaScript caveat
-
-JavaScript::Beautifier is older than many modern JavaScript syntax forms. Some 
-modern tokens may be split incorrectly by the beautifier. For example, arrow 
-functions may be transformed incorrectly:
-
-() => {
-
-may become:
-
-() = > {
-
-PrettyTidy currently detects and repairs a small set of known token splits:
-
-- =>
-- ?.
-- ??
-- ??=
-- ||=
-- &&=
-
-After repair, PrettyTidy checks whether any of those known munges remain. If a known 
-munge is detected, PrettyTidy leaves the original JavaScript body unchanged and 
-emits a warning naming the affected <script> block.
-
-Warning comment injection
-
-When PrettyTidy accepts a reformatted JavaScript body, it injects a visible comment 
-inside the script block:
-
-<script>
-<!-- -->
-<!--     This block has been reformatted from the original. -->
-<!--     If the JavaScript no longer runs, -->
-<!--     rerun with --javascript=off. -->
-<!-- -->
-
-...
-</script>
-
-This comment is only inserted when the emitted JavaScript body differs from the 
-original normalized body. If the JavaScript formatter appears to munge syntax and 
-PrettyTidy falls back to the original body, no reformatting comment is injected.
-
-Safety policy
-
-PrettyTidy’s JavaScript handler is intentionally conservative:
-
-- if JavaScript formatting succeeds cleanly, PrettyTidy uses the formatted body
-- if known JavaScript munging is detected, PrettyTidy keeps the original body
-- if formatting fails, PrettyTidy keeps the original body
-- PrettyTidy does not attempt to fully parse JavaScript itself
-
-This means some JavaScript blocks may remain unformatted. That is preferable to 
-producing readable JavaScript that no longer runs.
-
-Future option
-
-A future option is planned:
-
---javascript on|off
-
-The default will be on.
-
-When disabled, PrettyTidy should leave JavaScript bodies unchanged, while still 
-allowing safe template-level handling around <script> blocks where appropriate.
-
-Perl version
-
-This distribution is currently developed on Perl 5.40.
-
-It may work with lower Perl versions, but that is not currently guaranteed or tested.
-
-License
-
-Same terms as Perl itself.
-
-Project home: https://github.com/Harryb382003/PrettyTidy
+See the distribution files for license information.
