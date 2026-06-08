@@ -120,3 +120,4 @@ subtest 'context zero suppresses unchanged lines around change' => sub {
 };
 
 done_testing;
+

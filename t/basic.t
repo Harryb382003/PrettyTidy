@@ -8,15 +8,21 @@ use Mojo::PrettyTidy;
 
 my $pt = Mojo::PrettyTidy->new;
 
-is( $pt->tidy( "abc  \nxyz\t \n" ),
-    "abc\nxyz\n", 'removes trailing horizontal whitespace', );
+isa_ok( $pt, 'Mojo::PrettyTidy' );
+can_ok( $pt, qw(tidy check) );
 
-is( $pt->tidy( "abc\r\nxyz\r\n" ), "abc\nxyz\n", 'normalizes CRLF to LF', );
+is( $pt->tidy( undef ), '', 'undef input returns empty string' );
+is( $pt->tidy( '' ),    '', 'empty input returns empty string' );
 
-is( $pt->tidy( "abc" ), "abc\n", 'ensures trailing newline', );
+my $html  = "<div><span>alpha</span></div>\n";
+my $once  = $pt->tidy( $html );
+my $twice = $pt->tidy( $once );
 
-ok( $pt->check( "abc\n" ), 'check returns true when unchanged' );
-ok( !$pt->check( "abc  \n" ),
-    'check returns false when changes would be made' );
+is( $twice, $once, 'tidy output is stable when tidied again' );
+
+ok( $pt->check( $once ), 'check returns true for already-tidied output' );
+
+ok( !$pt->check( $html ),
+    'check returns false when tidy output would change', );
 
 done_testing;

@@ -15,6 +15,7 @@ our $VERSION = '0.01';
 sub new ( $class, %args ) {
   my $self = bless {
           attributes   => defined $args{attributes}   ? $args{attributes} : 1,
+          cleanup      => defined $args{cleanup}      ? $args{cleanup}    : 1,
           columns      => defined $args{columns}      ? $args{columns}    : 80,
           indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
           javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
@@ -23,6 +24,10 @@ sub new ( $class, %args ) {
   }, $class;
 
   return $self;
+}
+
+sub check ( $self, $text ) {
+  return $self->tidy( $text ) eq $text ? 1 : 0;
 }
 
 sub _chunk ( $self, $text ) {
@@ -55,16 +60,20 @@ sub _chunk ( $self, $text ) {
 }
 
 sub _cleanup_runtime_artifacts ( $self ) {
-  my @files = glob File::Spec->catfile( 'tmp', 'pt.raw-perltidy.out' );
-  push @files, glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl' );
+  my @files = ( File::Spec->catfile( 'tmp', 'pt.raw-perltidy.out' ), );
+
   push @files,
-      glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.LOG' );
+      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl' ) );
   push @files,
-      glob File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.ERR' );
+      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.LOG' ) );
+  push @files,
+      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.ERR' ) );
 
   for my $file ( @files ) {
     next unless -e $file;
-    unlink $file or warn "Could not remove $file: $!";
+
+    unlink $file
+        or warn "Could not remove $file: $!";
   }
 
   return;

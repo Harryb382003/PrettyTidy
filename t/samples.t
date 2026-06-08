@@ -19,6 +19,16 @@ local $/;
 my $input = <$fh>;
 close $fh;
 
+sub ep_tag_kinds ( $text ) {
+  my @tags = $text =~ /<%(?:==|=|#)?[\s\S]*?%>/g;
+
+  return [
+    map {
+      /^<%(==|=|#)?/;
+      defined $1 ? $1 : '';
+    } @tags ];
+}
+
 ok defined $input,   'sample file was read';
 ok length( $input ), 'sample file is not empty';
 
@@ -36,17 +46,17 @@ my $in_ep_tags  = () = $input  =~ /<%[=%]?/g;
 my $out_ep_tags = () = $output =~ /<%[=%]?/g;
 is $out_ep_tags, $in_ep_tags, 'EP tag count preserved';
 
-my $in_lines_with_ep  = () = $input  =~ /^.*<%.*$/mg;
-my $out_lines_with_ep = () = $output =~ /^.*<%.*$/mg;
-is $out_lines_with_ep, $in_lines_with_ep,
-    'lines containing EP markers are preserved in count';
+is_deeply(
+           ep_tag_kinds( $output ),
+           ep_tag_kinds( $input ),
+           'EP tag kind/order preserved', );
 
 if ( $input =~ /<%=/ ) {
   like $output, qr/<%=/, 'expression tag survives';
 }
 
 if ( $input =~ /<%==/ ) {
-  like $output, qr/<%==/, 'escaped expression tags survive';
+  like $output, qr/<%==/, 'raw expression tags survive';
 }
 
 if ( $input =~ /<%/ ) {
