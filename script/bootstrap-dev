@@ -5,6 +5,7 @@ use feature 'signatures';
 use FindBin qw($Bin);
 use File::Spec;
 use Getopt::Long qw(GetOptions);
+use Cwd          qw(abs_path);
 
 my $install = 0;
 my $missing = 0;
@@ -36,7 +37,7 @@ sub say_check ( $label, $ok, $detail = '' ) {
   say sprintf "%-24s %s%s", $label, $mark, length $detail ? " ($detail)" : '';
 }
 
-my $root = File::Spec->rel2abs( File::Spec->catdir( $Bin, '..' ) );
+my $root = abs_path( File::Spec->catdir( $Bin, '..' ) );
 
 say "Mojo::PrettyTidy dev bootstrap";
 say "Project root: $root";
