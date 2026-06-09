@@ -1152,6 +1152,16 @@ s{(<nav\b[^>]*\bnavbar\b[^>]*>)\n?(<a\b[^>]*\bnavbar-brand\b[^>]*>)}{$1\n\n$2}gi
   return $text;
 }
 
+sub _js_prebake_inject ( $self ) {
+  return
+        "\n"
+      . "<!--\n"
+      . "This block has been reformatted from the original.\n"
+      . "If the JavaScript no longer runs,\n"
+      . "rerun with --javascript=off.\n"
+      . "-->\n\n";
+}
+
 sub _js_prebake_scripts ( $self, $text ) {
   return '' unless defined $text && length $text;
 
@@ -1184,12 +1194,7 @@ sub _js_prebake_scripts ( $self, $text ) {
 
     my $note = '';
     if ( $body ne $original_body ) {
-      $note = "\n"
-          . "<!--\n"
-          . "This block has been reformatted from the original.\n"
-          . "If the JavaScript no longer runs,\n"
-          . "rerun with --javascript=off.\n"
-          . "-->\n\n";
+      $note = $self->_js_prebake_inject;
     }
 
     $out .= "$open\n$note$body\n$close";
