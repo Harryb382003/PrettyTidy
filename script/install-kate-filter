@@ -1,0 +1,54 @@
+#!/usr/bin/env perl
+use v5.40.0;
+use common::sense;
+use feature 'signatures';
+
+use FindBin qw($Bin);
+use File::Spec;
+use Cwd qw(abs_path);
+
+sub have_cmd ( $cmd ) {
+  for my $dir ( split /:/, $ENV{PATH} // '' ) {
+    my $path = File::Spec->catfile( $dir, $cmd );
+    return $path if -x $path;
+  }
+
+  return;
+}
+
+my $root = abs_path( File::Spec->catdir( $Bin, '..' ) );
+my $bin  = File::Spec->catfile( $root, 'script', 'mojo-prettytidy' );
+
+if ( !-x $bin ) {
+  die "Could not find executable formatter:\n  $bin\n\n"
+      . "Expected script/mojo-prettytidy to exist and be executable.\n";
+}
+
+my $perl = $^X;
+
+say 'Mojo::PrettyTidy Kate External Tool setup';
+say '';
+say "Project root: $root";
+say "Perl:         $perl";
+say "Formatter:    $bin";
+say '';
+
+say 'In Kate:';
+say '  Settings -> Configure Kate -> External Tools';
+say '  Add tool';
+say '';
+say 'Suggested settings:';
+say '';
+say '  Name:        Mojo::PrettyTidy';
+say '  Category:    Formatting';
+say '  Executable:  ' . $perl;
+say '  Arguments:   ' . $bin . ' --stdin';
+say '  Input:       Current Document';
+say '  Output:      Replace Current Document';
+say '  Save:        None';
+say '  Mime types:  text/html';
+say '';
+say 'Optional arguments while testing:';
+say '  ' . $bin . ' --stdin --javascript=off';
+say '';
+say 'After adding it, open a .html.ep file and run the tool from Kate.';
