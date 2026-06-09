@@ -13,7 +13,7 @@ use Mojo::PrettyTidy;
 use Test::CLI::Capture qw(run_cmd);
 
 my $script =
-    File::Spec->rel2abs( File::Spec->catfile( qw(script mojo-prettytidy) ) );
+    File::Spec->rel2abs( File::Spec->catfile( qw(bin mojo-prettytidy) ) );
 my $lib = File::Spec->rel2abs( 'lib' );
 
 ok -e $script, 'CLI script exists';

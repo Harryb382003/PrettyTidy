@@ -14,7 +14,7 @@ use Test::CLI::Capture qw(run_cmd);
 my $root   = File::Spec->rel2abs( File::Spec->curdir );
 my $lib    = File::Spec->catdir( $root, 'lib' );
 my $tlib   = File::Spec->catdir( $root, 't', 'lib' );
-my $script = File::Spec->catfile( $root, qw(script mojo-prettytidy) );
+my $script = File::Spec->catfile( $root, qw(bin mojo-prettytidy) );
 
 ok -e $script, 'CLI script exists';
 ok -x $script, 'CLI script is executable';
