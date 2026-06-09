@@ -75,15 +75,15 @@ sub _slurp ( $path ) {
 
 __END__
 
-=head1 TEST HELPER: Test::CLI::Capture
+=head1 TEST HELPER: TestCapture
 
 =head2 NAME
 
-Test::CLI::Capture - Core-only subprocess capture helper for tests
+TestCapture - Core-only subprocess capture helper for tests
 
 =head2 SYNOPSIS
 
-    use Test::CLI::Capture qw(run_cmd);
+    use TestCapture qw(run_cmd);
 
     my $r = run_cmd(
       argv  => [ $^X, '-Ilib', 'script/mojo-prettytidy', '--stdin' ],

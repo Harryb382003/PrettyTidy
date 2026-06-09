@@ -2,14 +2,13 @@ use v5.40.0;
 use common::sense;
 use feature 'signatures';
 
-use lib 'lib';
-use lib 't/lib';
-
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Spec;
-use File::Path         qw(make_path);
-use Test::CLI::Capture qw(run_cmd);
+use File::Path qw(make_path);
+
+use lib 't';
+use TestCapture qw(run_cmd);
 
 my $root   = File::Spec->rel2abs( File::Spec->curdir );
 my $lib    = File::Spec->catdir( $root, 'lib' );
