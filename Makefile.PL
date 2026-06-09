@@ -29,7 +29,7 @@ WriteMakefile(
    AUTHOR       => 'Harry Bennett',
    LICENSE      => 'perl',
    MIN_PERL_VERSION => '5.040000',
-   EXE_FILES        => ['script/mojo-prettytidy'],
+   EXE_FILES        => ['bin/mojo-prettytidy'],
    PREREQ_PM        => {
                  'common::sense' => 0,
                  'Getopt::Long'  => 0,
