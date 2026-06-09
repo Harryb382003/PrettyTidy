@@ -33,61 +33,54 @@ if ( !$bin ) {
       . "  mojo-prettytidy\n";
 }
 
-say $tool_name . ' Kate Tool setup';
-say '';
-say "Project root: $root";
-say "Perl:         $perl";
-say "Formatter:    $bin";
-say '';
-
 say 'Kate External Tool settings:';
 say '';
 say "  Name:        $tool_name";
 say '  Category:    Formatting';
-say "  Executable:  $^X";
-say "  Arguments:   $bin --stdin";
-say '  Input:       Current Document';
-say '  Output:      Replace Current Document';
-say '  Save:        None';
+say "  Executable:  $bin";
+say '  Arguments:   --write %{Document:FilePath}\s';
+say '  Input:       None';
+say '  Output:      Display in Pane';
+say '  Save:        Current Document';
+say '  Reload:      true';
+say '  Trigger:     None';
 say '  Mime types:  text/html';
 say '';
-
-# say '';
-# say 'Kate config candidates:';
-#
-# if ( @kate_configs ) {
-#   say "  $_" for @kate_configs;
-# } else {
-#   say '  none found yet';
-# }
-
-if ( -e $ini ) {
-  my $backup = "$ini.bak";
-  unlink $backup if -e $backup;
-  rename $ini, $backup or die "backup $ini -> $backup failed: $!\n";
-  say "Backed up existing config:";
-  say "  $backup";
-}
 
 if ( $install ) {
   make_path( $kate_dir );
 
-  open my $fh, '>', $ini or die "open $ini failed: $!\n";
-  print {$fh} kate_ini_content( $bin );
+  my $content = kate_ini_content( $bin );
+
+  if ( -e $ini ) {
+    open my $fh, '<', $ini or die "read $ini failed: $!\n";
+    local $/;
+    my $old = <$fh>;
+    close $fh or die "close $ini failed: $!\n";
+
+    if ( $old eq $content ) {
+      say "Kate External Tool config is already up to date:";
+      say "  $ini";
+      exit 0;
+    }
+
+    my $backup = "$ini.bak";
+    unlink $backup if -e $backup;
+    rename $ini, $backup or die "backup $ini -> $backup failed: $!\n";
+
+    say "Backed up existing config:";
+    say "  $backup";
+  }
+
+  open my $fh, '>', $ini or die "write $ini failed: $!\n";
+  print {$fh} $content;
   close $fh or die "close $ini failed: $!\n";
 
   say "Wrote Kate External Tool config:";
   say "  $ini";
   say '';
-  say 'Restart Kate or reopen External Tools if the new tool does not appear
-immediately.';
-} else {
-  say 'Kate External Tool config that would be written:';
-  say '';
-  say kate_ini_content( $bin );
-  say '';
-  say "Install with:";
-  say "  script/kate-tool --install";
+  say 'Restart Kate or reopen External Tools'
+      . ' if the new tool does not appear immediately.';
 }
 
 say '';
