@@ -6,6 +6,12 @@ use feature 'signatures';
 use Cwd     qw(abs_path);
 use FindBin qw($Bin);
 use File::Spec;
+use File::Path   qw(make_path);
+use Getopt::Long qw(GetOptions);
+
+my $install = 0;
+
+GetOptions( 'install!' => \$install, ) or die "usage: $0 [--install]\n";
 
 my $perl      = $^X;
 my $tool_name = 'Mojo::PrettyTidy';
@@ -13,6 +19,11 @@ my $root      = abs_path( File::Spec->catdir( $Bin, '..' ) );
 my $local_bin = File::Spec->catfile( $root, 'bin', 'mojo-prettytidy' );
 my $path_bin  = have_cmd( 'mojo-prettytidy' );
 my $bin       = -x $local_bin ? $local_bin : $path_bin;
+my $kate_dir = File::Spec->catdir(
+                                   $ENV{HOME},    'Library',
+                                   'Preferences', 'kate',
+                                   'externaltools', );
+my $ini = File::Spec->catfile( $kate_dir, 'mojo-prettytidy.ini' );
 
 if ( !$bin ) {
   die "Formatter executable not found.\n"
@@ -41,8 +52,67 @@ say '  Save:        None';
 say '  Mime types:  text/html';
 say '';
 
+# say '';
+# say 'Kate config candidates:';
+#
+# if ( @kate_configs ) {
+#   say "  $_" for @kate_configs;
+# } else {
+#   say '  none found yet';
+# }
+
+if ( -e $ini ) {
+  my $backup = "$ini.bak";
+  unlink $backup if -e $backup;
+  rename $ini, $backup or die "backup $ini -> $backup failed: $!\n";
+  say "Backed up existing config:";
+  say "  $backup";
+}
+
+if ( $install ) {
+  make_path( $kate_dir );
+
+  open my $fh, '>', $ini or die "open $ini failed: $!\n";
+  print {$fh} kate_ini_content( $bin );
+  close $fh or die "close $ini failed: $!\n";
+
+  say "Wrote Kate External Tool config:";
+  say "  $ini";
+  say '';
+  say 'Restart Kate or reopen External Tools if the new tool does not appear
+immediately.';
+} else {
+  say 'Kate External Tool config that would be written:';
+  say '';
+  say kate_ini_content( $bin );
+  say '';
+  say "Install with:";
+  say "  script/kate-tool --install";
+}
+
+say '';
 say 'Testing alternative:';
 say "  Arguments:   $bin --stdin --javascript=off";
+
+sub find_kate_config_candidates () {
+  my $home = $ENV{HOME} // die "HOME is not set\n";
+
+  my @candidates = (
+                     File::Spec->catfile(
+                                       $home, 'Library', 'Preferences', 'katerc'
+                     ),
+                     File::Spec->catfile(
+                       $home,         'Library',
+                       'Preferences', 'org.kde.kate.plist'
+                     ),
+                     File::Spec->catfile( $home, '.config', 'katerc' ),
+                     File::Spec->catdir( $home, '.local', 'share', 'kate' ),
+                     File::Spec->catdir(
+                                 $home, 'Library', 'Application Support', 'kate'
+                     ), );
+
+  return grep { -e $_ } @candidates;
+}
 
 sub have_cmd ( $cmd ) {
   for my $dir ( split /:/, $ENV{PATH} // '' ) {
@@ -51,4 +121,19 @@ sub have_cmd ( $cmd ) {
   }
 
   return;
+}
+
+sub kate_ini_content ( $bin ) {
+  return join "\n",
+      '[General]',
+      'actionName=externaltool_mojo_prettytidy',
+      'arguments=--write %{Document:FilePath}\s',
+      "executable=$bin",
+      'mimetypes=text/html',
+      'name=Mojo::PrettyTidy',
+      'output=DisplayInPane',
+      'reload=true',
+      'save=CurrentDocument',
+      'trigger=None',
+      '';
 }
