@@ -86,7 +86,7 @@ TestCapture - Core-only subprocess capture helper for tests
     use TestCapture qw(run_cmd);
 
     my $r = run_cmd(
-      argv  => [ $^X, '-Ilib', 'script/mojo-prettytidy', '--stdin' ],
+      argv  => [ $^X, '-Ilib', 'bin/mojo-prettytidy', '--stdin' ],
       stdin => "alpha  \n",
     );
 

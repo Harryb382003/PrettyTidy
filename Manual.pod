@@ -597,11 +597,11 @@ spirit to C<perltidy>.
 
 Typical patterns:
 
-    script/mojo-prettytidy %filename
+    bin/mojo-prettytidy %filename
 
 or:
 
-    script/mojo-prettytidy --stdin
+    bin/mojo-prettytidy --stdin
 
 For non-destructive inspection of generated output, C<--output>, C<--prefix>,
 and C<--outdir> are often more useful than C<--diff>.
