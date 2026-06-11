@@ -417,13 +417,6 @@ would be made.
 
 This option requires a single input file.
 
-=head2 --cleanup / --no-cleanup
-
-Remove PrettyTidy temporary files during normal operation. Enabled by default.
-
-Use C<--no-cleanup> to preserve perltidy scratch files and diagnostics after a
-run.
-
 =head2 --columns, --cols, -c
 
 Set the target column width for conservative width-aware formatting. The

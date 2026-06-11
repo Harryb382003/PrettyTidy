@@ -20,7 +20,6 @@ my %opt = (
             backup       => 0,
             backup_ext   => '.bak',
             check        => 0,
-            cleanup      => 1,
             columns      => 80,
             config       => '',
             diff         => 0,
@@ -57,10 +56,6 @@ GetOptions(
   'check' => sub {
     $opt{check}        = 1;
     $opt_source{check} = 'cli';
-  },
-  'cleanup!' => sub ( $name, $val ) {
-    $opt{cleanup}        = $val ? 1 : 0;
-    $opt_source{cleanup} = 'cli';
   },
   'columns|cols|c=i' => sub ( $name, $val ) {
     $opt{columns}        = $val;
@@ -133,7 +128,8 @@ if ( $opt{version} ) {
 
 my @inputs = @ARGV;
 
-my $cfg = {};
+my $cfg   = {};
+my @files = _collect_input_files( @inputs );
 
 if ( $opt_source{config} eq 'cli' ) {
   $cfg = _load_config_file( $opt{config} );
@@ -151,8 +147,8 @@ if ( $opt_source{config} eq 'cli' ) {
 }
 
 for my $name (
-        qw(attributes cleanup columns indent_width javascript outdir perl prefix
-        tab_width) )
+               qw(attributes  columns indent_width javascript outdir perl prefix
+               tab_width) )
 {
   next unless exists $cfg->{$name};
   next unless $opt_source{$name} eq 'default';
@@ -210,7 +206,6 @@ pod2usage( "--stdin cannot be combined with file or directory inputs\n" )
 
 my $pt = Mojo::PrettyTidy->new(
                                 attributes   => $opt{attributes} ? 1 : 0,
-                                cleanup      => $opt{cleanup}    ? 1 : 0,
                                 columns      => $opt{columns} || 0,
                                 indent_width => $opt{indent_width},
                                 javascript   => $opt{javascript} ? 1 : 0,
@@ -240,8 +235,6 @@ pod2usage( "No input provided. Supply a file, directory, or --stdin.\n" )
 
 pod2usage( "--output cannot be combined with multiple inputs\n" )
     if $opt{output} && @inputs > 1;
-
-my @files = _collect_input_files( @inputs );
 
 pod2usage( "No input files found\n" ) unless @files;
 
@@ -281,7 +274,7 @@ if ( @files == 1 && !length( $opt{prefix} ) && !length( $opt{outdir} ) ) {
       print $diff_text;
       exit 1;
     }
-
+    $pt->_cleanup_artifacts;
     exit 0;
   }
 
@@ -473,7 +466,6 @@ sub _spew ( $path, $content ) {
 sub _validate_config ( $cfg, $path ) {
   my %allowed = map { $_ => 1 } qw(
       attributes
-      cleanup
       columns
       indent_width
       javascript

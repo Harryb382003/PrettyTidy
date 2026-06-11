@@ -5,8 +5,8 @@ use feature 'signatures';
 
 use common::sense;
 use Cwd;
-use File::Path qw/make_path/;
 use File::Basename;
+use File::Path qw(remove_tree make_path);
 use File::Spec;
 use JavaScript::Beautifier qw/js_beautify/;
 
@@ -15,7 +15,6 @@ our $VERSION = '0.01';
 sub new ( $class, %args ) {
   my $self = bless {
           attributes   => defined $args{attributes}   ? $args{attributes} : 1,
-          cleanup      => defined $args{cleanup}      ? $args{cleanup}    : 1,
           columns      => defined $args{columns}      ? $args{columns}    : 80,
           indent_width => defined $args{indent_width} ? $args{indent_width} : 2,
           javascript   => defined $args{javascript}   ? $args{javascript}   : 1,
@@ -59,17 +58,30 @@ sub _chunk ( $self, $text ) {
   return @chunks;
 }
 
-sub _cleanup_runtime_artifacts ( $self ) {
-  my @files = ( File::Spec->catfile( 'tmp', 'pt.raw-perltidy.out' ), );
+sub _cleanup_artifacts ( $self ) {
+  my @dirs = (
+               File::Spec->catdir( 'tmp', 'perltidy' ),
+               File::Spec->catdir( 'tmp', 'debug' ),
+               File::Spec->catdir( 'tmp', 'error' ),
+               File::Spec->catdir( 'tmp', 'javascript' ),
+               File::Spec->catdir( 'tmp', 'prettytidy' ), );
 
-  push @files,
-      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl' ) );
-  push @files,
-      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.LOG' ) );
-  push @files,
-      glob( File::Spec->catfile( 'tmp', 'perltidy', 'pt-region-*.pl.ERR' ) );
+  for my $dir ( @dirs ) {
+    next unless -e $dir;
 
-  for my $file ( @files ) {
+    remove_tree( $dir, {error => \my $err} );
+
+    if ( @$err ) {
+      for my $diag ( @$err ) {
+        my ( $path, $message ) = %$diag;
+        warn "Could not remove $path: $message\n";
+      }
+    }
+  }
+
+  my @legacy_files = ( File::Spec->catfile( 'tmp', 'pt.raw-perltidy.out' ), );
+
+  for my $file ( @legacy_files ) {
     next unless -e $file;
 
     unlink $file
@@ -1468,18 +1480,6 @@ sub _js_postfix_munges ( $self, $before, $after ) {
   return $after;
 }
 
-sub _pt_debug_cleanup_file ( $self, $name ) {
-  return unless defined $name && length $name;
-
-  my $path = File::Spec->catfile( 'tmp', 'perltidy', $name );
-
-  if ( -e $path ) {
-    unlink $path or warn "Could not remove $path: $!";
-  }
-
-  return;
-}
-
 sub _pt_debug_write_file ( $self, $idx, $perl ) {
   my $dir = File::Spec->catdir( 'tmp', 'perltidy' );
 
@@ -1954,7 +1954,7 @@ sub _separate_blocks ( $self, $text ) {
 }
 
 sub tidy ( $self, $input ) {
-  $self->_cleanup_runtime_artifacts() if $self->{cleanup};
+  $self->_cleanup_artifacts;
   my $text = defined $input ? $input : '';
   my $flat = $self->_flatten( $text );
 
