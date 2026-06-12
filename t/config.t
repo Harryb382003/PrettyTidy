@@ -6,12 +6,15 @@ use Test::More;
 use File::Temp qw(tempdir);
 use File::Spec;
 use File::Path qw(make_path);
-use Mojo::PrettyTidy;
+
+use lib 'lib';
 use lib 't';
+use Mojo::PrettyTidy;
 use TestCapture qw(run_cmd);
 
 my $script =
     File::Spec->rel2abs( File::Spec->catfile( qw(bin mojo-prettytidy) ) );
+
 my $lib = File::Spec->rel2abs( 'lib' );
 
 ok -e $script, 'CLI script exists';

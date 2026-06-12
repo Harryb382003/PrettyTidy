@@ -1,5 +1,7 @@
 package Mojo::PrettyTidy;
 
+# ABSTRACT: Format Mojolicious .html.ep templates
+
 use v5.40.0;
 use feature 'signatures';
 

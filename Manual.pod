@@ -599,6 +599,24 @@ or:
 For non-destructive inspection of generated output, C<--output>, C<--prefix>,
 and C<--outdir> are often more useful than C<--diff>.
 
+=head2 Editor integration
+
+Mojo::PrettyTidy includes an optional L<Kate|https://kate-editor.org/>
+External Tool helper:
+
+  kate-tool --install
+
+This writes a Kate External Tools configuration for running
+C<mojo-prettytidy> against the current document, when the document is saved.
+
+Other editor integrations are encouraged. If you use another editor,
+please consider contributing a small installer/helper for that editor.
+Good candidates include Vim, Neovim, VS Code, BBEdit, Sublime Text,
+and any editor that can run an external formatter command.
+
+The formatter itself is editor-agnostic; editor helpers are convenience
+wrappers around the C<mojo-prettytidy> command.
+
 =head1 EXIT STATUS
 
 =over 4

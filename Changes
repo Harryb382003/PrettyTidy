@@ -1,7 +1,7 @@
 Revision history for Mojo-PrettyTidy
 
 0.01  2026-03-07
-      - Initial development release
+      - Unreleased initial development
       - Added conservative normalization
       - Added narrow indentation pass for obvious HTML-only lines
       - Added plain text indentation inside safe HTML structure
@@ -29,3 +29,7 @@ Unreleased
   - Added development bootstrap helper.
   - Added Kate External Tool helper.
   - Added smoke tests using installed Mojolicious templates.
+
+0.01  2026-06-12
+Unreleased
+  - create dzil-experiment branch

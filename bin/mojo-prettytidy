@@ -8,7 +8,9 @@ use Getopt::Long qw(:config no_ignore_case bundling);
 use File::Copy   qw(copy);
 use File::Spec;
 use File::Path qw(make_path);
+use FindBin    qw($Bin);
 use JSON::PP   qw(decode_json);
+use Pod::Text;
 use Pod::Usage qw(pod2usage);
 
 use lib 'lib';
@@ -40,6 +42,16 @@ my %opt = (
 my %default_opt = %opt;
 my %opt_source  = map { $_ => 'default' } keys %opt;
 
+if ( $opt{help} ) {
+  my $manual = _manual_path()
+      or die "Could not find Manual.pod\n";
+
+  my $section = _pod_section( _slurp( $manual ), 'COMMAND-LINE OPTIONS' )
+      or die "Could not find COMMAND-LINE OPTIONS in $manual\n";
+
+  _print_pod_text( $section );
+  exit 0;
+}
 GetOptions(
   'attributes|attrib|a!' => sub ( $name, $val ) {
     $opt{attributes}        = $val ? 1 : 0;
@@ -118,8 +130,24 @@ GetOptions(
   },
 ) or pod2usage( 2 );
 
-pod2usage( 1 )             if $opt{help};
-pod2usage( -verbose => 2 ) if $opt{man};
+if ( $opt{help} ) {
+  my $manual = _manual_path()
+      or die "Could not find Manual.pod\n";
+
+  my $section = _pod_section( _slurp( $manual ), 'COMMAND-LINE OPTIONS' )
+      or die "Could not find COMMAND-LINE OPTIONS in $manual\n";
+
+  _print_pod_text( $section );
+  exit 0;
+}
+
+if ( $opt{man} ) {
+  my $manual = _manual_path()
+      or die "Could not find Manual.pod\n";
+
+  _print_pod_text( _slurp( $manual ) );
+  exit 0;
+}
 
 if ( $opt{version} ) {
   print "mojo-prettytidy $Mojo::PrettyTidy::VERSION\n";
@@ -397,6 +425,44 @@ sub _load_config_file ( $path ) {
       unless ref( $cfg ) eq 'HASH';
 
   return $cfg;
+}
+
+sub _manual_path () {
+  my @candidates = (
+                     File::Spec->catfile( $Bin, '..', 'Manual.pod' ),
+                     File::Spec->catfile( $Bin, '..', 'share', 'Manual.pod' ),
+                     File::Spec->catfile( '.',  'Manual.pod' ), );
+
+  for my $path ( @candidates ) {
+    return $path if -f $path;
+  }
+
+  return;
+}
+
+sub _pod_section ( $pod, $heading ) {
+  my $quoted = quotemeta $heading;
+
+  if ( $pod =~ /^=head1\s+$quoted\b(.*?)(?=^=head1\s+|\z)/ms ) {
+    return "=head1 $heading$1";
+  }
+
+  if ( $pod =~ /^=head2\s+$quoted\b(.*?)(?=^=head[12]\s+|\z)/ms ) {
+    return "=head2 $heading$1";
+  }
+
+  return;
+}
+
+sub _print_pod_text ( $pod ) {
+  open my $in, '<', \$pod or die "Cannot open POD scalar for reading: $!";
+
+  my $parser = Pod::Text->new( sentence => 0,
+                               width    => 76, );
+
+  $parser->parse_from_filehandle( $in, \*STDOUT );
+
+  return;
 }
 
 sub _output_path_for ( $input, $prefix, $outdir ) {

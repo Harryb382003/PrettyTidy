@@ -2,19 +2,25 @@ use v5.40.0;
 use common::sense;
 use feature 'signatures';
 
+use Cwd qw(abs_path);
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Spec;
 use File::Path qw(make_path);
-use Mojo::PrettyTidy;
+use FindBin    qw($Bin);
 
+use lib 'lib';
 use lib 't';
 use TestCapture qw( run_cmd );
+use Mojo::PrettyTidy;
 
-my $root   = File::Spec->rel2abs( File::Spec->curdir );
+my $root   = abs_path( File::Spec->catdir( $Bin, '..' ) );
 my $lib    = File::Spec->catdir( $root, 'lib' );
 my $tlib   = File::Spec->catdir( $root, 't', 'lib' );
 my $script = File::Spec->catfile( $root, qw(bin mojo-prettytidy) );
+
+my $untidy = '<div><span>alpha</span></div>' . "\n";
+my $tidied = expected_tidy( $untidy );
 
 ok -e $script, 'CLI script exists';
 ok -x $script, 'CLI script is executable';
@@ -55,9 +61,6 @@ sub expected_tidy ( $input, %args ) {
   my $pt = Mojo::PrettyTidy->new( %args );
   return $pt->tidy( $input );
 }
-
-my $untidy = '<div><span>alpha</span></div>' . "\n";
-my $tidied = expected_tidy( $untidy );
 
 subtest 'default mode writes tidied content to stdout' => sub {
   my $tmpdir = tempdir( CLEANUP => 1 );
@@ -131,6 +134,16 @@ subtest '--diff returns 1 and prints diff when changes would occur' => sub {
       'diff includes tidied header';
   like $r->{stdout}, qr/^@@ /m, 'diff includes hunk header';
   is $r->{stderr}, '', 'stderr is empty';
+};
+
+subtest '--help reports command-line options' => sub {
+  my $r = run_cmd( argv => [ $^X, '-I', $lib, $script, '--help' ], );
+
+  is $r->{exit}, 0, '--help exits 0';
+  like $r->{stdout}, qr/COMMAND-LINE OPTIONS/,
+      '--help shows command-line options';
+  like $r->{stdout}, qr/--version/, '--help includes option details';
+  is $r->{stderr}, '', '--help has no stderr';
 };
 
 subtest '--output writes tidied content to a separate file' => sub {
