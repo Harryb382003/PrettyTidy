@@ -3,10 +3,11 @@ LICENSE
 Makefile.PL
 MANIFEST
 README.md
+bin/bootstrap-dev
+bin/kate-tool
 bin/mojo-prettytidy
 lib/Mojo/PrettyTidy.pm
 lib/Mojo/PrettyTidy/Diff.pm
-script/bootstrap-dev
 t/00-load.t
 t/attributes.t
 t/basic.t

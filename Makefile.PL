@@ -31,9 +31,16 @@ WriteMakefile(
    MIN_PERL_VERSION => '5.040000',
    EXE_FILES        => ['bin/mojo-prettytidy'],
    PREREQ_PM        => {
-                 'common::sense' => 0,
-                 'Getopt::Long'  => 0,
-                 'Pod::Usage'    => 0,
+                 'common::sense'          => 0,
+                 'Getopt::Long'           => 0,
+                 'Pod::Usage'             => 0,
+                 'Mojolicious'            => 0,
+                 'JavaScript::Beautifier' => 0,
+                 'Perl::Tidy'             => 0,
+   },
+   TEST_REQUIRES => {
+                     'Test::More' => 0,
+                     'File::Temp' => 0,
    },
    META_MERGE => {
      resources => {repository => 'https://github.com/Harryb382003/PrettyTidy',},
@@ -61,8 +68,7 @@ Re-run with:
 MSG
   }
 
-  copy( $source, $target )
-      or die "Failed to copy '$source' to '$target': $!";
+  copy( $source, $target ) or die "Failed to copy '$source' to '$target': $!";
 
   print "Installed home config to $target\n";
 }
