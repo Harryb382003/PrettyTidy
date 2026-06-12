@@ -12,9 +12,14 @@ tool.
 This tool formats Mojolicious template source that is intended to be rendered by
 a Mojolicious application.
 
-It is not intended for downloaded browser source, saved web pages, scraper
-output, or other already-rendered HTML documents. You can try that if you really
-want to, but that monkey is not a member of this circus.
+It is not a general-purpose HTML formatter, browser-source formatter, or
+post-rendered HTML cleanup tool. It is not intended for HTML downloaded from a
+browser's "View Source", saved web pages, scraper output, or other
+already-rendered documents.
+
+You can try that if you really want to and good luck with that, but it is outside
+the supported use case. So, I don't want to hear about your miserable experience
+for having done so. That monkey is simply not a member of this circus.
 
 ## Install
 
