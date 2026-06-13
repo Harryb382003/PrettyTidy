@@ -474,6 +474,7 @@ output.
 
 This option cannot be combined with C<--write>, C<--check>, or C<--diff>. It
 is intended for single-input use.
+
 =head2 --outdir
 
 When writing multiple outputs, place generated files in the specified
