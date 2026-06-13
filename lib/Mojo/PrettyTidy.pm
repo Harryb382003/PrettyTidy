@@ -12,7 +12,7 @@ use File::Path qw(remove_tree make_path);
 use File::Spec;
 use JavaScript::Beautifier qw/js_beautify/;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 sub new ( $class, %args ) {
   my $self = bless {
@@ -1992,3 +1992,16 @@ sub tidy ( $self, $input ) {
 
 1;
 
+=head1 NAME
+
+Mojo::PrettyTidy - Format Mojolicious .html.ep templates
+
+=head1 DESCRIPTION
+
+Mojo::PrettyTidy is a conservative formatter for Mojolicious
+C<.html.ep> templates.
+
+See L<Mojo::PrettyTidy::Manual> for user-facing command-line
+documentation.
+
+=cut

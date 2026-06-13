@@ -40,3 +40,8 @@ Unreleased
   - Added conservative formatting for Mojolicious .html.ep templates.
   - Added optional JavaScript beautification safeguards.
   - Added Kate External Tool helper.
+
+
+
+  0.02  2026-06-12
+  CPAN/POD NAME entry, so MetaCPAN has something to see.
