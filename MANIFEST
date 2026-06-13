@@ -1,13 +1,16 @@
-Changes
-LICENSE
-Makefile.PL
-MANIFEST
-README.md
-bin/bootstrap-dev
+.mojo-prettytidy.json
 bin/kate-tool
 bin/mojo-prettytidy
+Changes
+dev/bootstrap-dev
 lib/Mojo/PrettyTidy.pm
 lib/Mojo/PrettyTidy/Diff.pm
+LICENSE
+Makefile.old
+Makefile.PL
+MANIFEST
+Manual.pod
+README.md
 t/00-load.t
 t/attributes.t
 t/basic.t
@@ -21,4 +24,3 @@ t/javascript.t
 t/perl.t
 t/samples.t
 t/TestCapture.pm
-
