@@ -33,3 +33,10 @@ Unreleased
 0.01  2026-06-12
 Unreleased
   - create dzil-experiment branch
+
+  0.01  2026-06-12
+  - First CPAN release.
+  - Added mojo-prettytidy command-line formatter.
+  - Added conservative formatting for Mojolicious .html.ep templates.
+  - Added optional JavaScript beautification safeguards.
+  - Added Kate External Tool helper.
