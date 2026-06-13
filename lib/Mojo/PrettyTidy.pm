@@ -12,7 +12,7 @@ use File::Path qw(remove_tree make_path);
 use File::Spec;
 use JavaScript::Beautifier qw/js_beautify/;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 sub new ( $class, %args ) {
   my $self = bless {
