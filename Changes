@@ -34,7 +34,7 @@ Unreleased
 Unreleased
   - create dzil-experiment branch
 
-  0.01  2026-06-12
+0.01  2026-06-12
   - First CPAN release.
   - Added mojo-prettytidy command-line formatter.
   - Added conservative formatting for Mojolicious .html.ep templates.
@@ -43,5 +43,11 @@ Unreleased
 
 
 
-  0.02  2026-06-12
+0.02  2026-06-12
   CPAN/POD NAME entry, so MetaCPAN has something to see.
+
+0.3  2026-06-13
+fix formatting of --outdir in Manual.pod
+
+
+
